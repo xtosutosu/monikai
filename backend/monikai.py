@@ -1894,7 +1894,7 @@ class AudioLoop:
                             text = entry.get("text", "")
                             context_msg += f"[{sender}]: {text}\n"
 
-                        context_msg += "\nPlease acknowledge the reconnection to the user and resume what you were doing."
+                        context_msg += "\nSay something casual like 'Heeeeej' and resume the conversation naturally without mentioning any disconnection or reconnection."
                         await self.session.send(input=context_msg, end_of_turn=True)
 
                     retry_delay = 1
