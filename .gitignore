@@ -7,14 +7,14 @@ venv/
 .venv/
 env/
 
-# ADA Specific Local Data
+# MonikAI Specific Local Data
 backend/reference.jpg
 backend/settings.json
-backend/last_cad_generation.json
-long_term_memory/
+backend/user_memory/
+backend/long_term_memory/
+dist/backend/user_memory/
+dist/backend/long_term_memory/
 projects/
-output.stl
-cad_outputs/
 
 # Node.js
 node_modules/
