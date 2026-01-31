@@ -1,5 +1,5 @@
 {
-  "name": "ada-v2",
+  "name": "monikai",
   "version": "1.0.0",
   "description": "MonikAI V2 - AI Assistant",
   "main": "electron/main.js",
