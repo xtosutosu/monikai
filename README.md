@@ -16,14 +16,14 @@ MonikAI is a sophisticated AI conversation partner and assistant designed for mu
 
 | Feature | Description | Technology |
 |---------|-------------|------------|
-| **🗣️ Low-Latency Voice** | Real-time conversation with interrupt handling | Gemini 2.5 Native Audio |
-| **🧊 Screen and Camera Recognition** | Real-time screen retrieval |
-| **🧠 Long-Term Memory** | AI keeps the conversations recorded and autonomically picks up new information to remember and learn |
-| **🖐️ Minority Report UI** | Gesture-controlled window manipulation | MediaPipe Hand Tracking |
-| **👁️ Face Authentication** | Secure local biometric login | MediaPipe Face Landmarker |
-| **🌐 Web Agent** | Autonomous browser automation | Playwright + Chromium |
-| **🏠 Smart Home** | Voice control for TP-Link Kasa devices | `python-kasa` |
-| **📁 Project Memory** | Persistent context across sessions | File-based JSON storage | Separate from Long-Term Memory |
+| **Low-Latency Voice** | Real-time conversation with interrupt handling | Gemini 2.5 Native Audio |
+| **Screen and Camera Recognition** | Real-time screen retrieval |
+| **Long-Term Memory** | AI keeps the conversations recorded and autonomically picks up new information to remember and learn |
+| **Minority Report UI** | Gesture-controlled window manipulation | MediaPipe Hand Tracking |
+| **Face Authentication** | Secure local biometric login | MediaPipe Face Landmarker |
+| **Web Agent** | Autonomous browser automation | Playwright + Chromium |
+| **Smart Home** | Voice control for TP-Link Kasa devices | `python-kasa` |
+| **Project Memory** | Persistent context across sessions | File-based JSON storage | Separate from Long-Term Memory |
 
 ### � Application Notes
 
@@ -59,7 +59,7 @@ MonikAI's "Minority Report" interface uses your webcam to detect hand gestures:
 
 ---
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 ```mermaid
 graph TB
@@ -90,7 +90,7 @@ graph TB
 
 ---
 
-## ⚡ TL;DR Quick Start (Experienced Developers)
+## TL;DR Quick Start (Experienced Developers)
 
 <details>
 <summary>Click to expand quick setup commands</summary>
@@ -119,9 +119,9 @@ conda activate monikai && npm run dev
 
 ---
 
-## 🛠️ Installation Requirements
+## Installation Requirements
 
-### 🆕 Absolute Beginner Setup (Start Here)
+### Absolute Beginner Setup (Start Here)
 If you have never coded before, follow these steps first!
 
 **Step 1: Install Visual Studio Code (The Editor)**
@@ -152,7 +152,7 @@ If you have never coded before, follow these steps first!
 
 ---
 
-### ⚠️ Technical Prerequisites
+### Technical Prerequisites
 Once you have the basics above, continue here.
 
 ### 1. System Dependencies
@@ -191,7 +191,7 @@ node --version  # Should show v18.x or higher
 npm install
 ```
 
-### 4. 🔐 Face Authentication Setup
+### 4. Face Authentication Setup
 To use the secure voice features, MonikAI needs to know what you look like.
 
 1. Take a clear photo of your face (or use an existing one).
@@ -201,7 +201,7 @@ To use the secure voice features, MonikAI needs to know what you look like.
 
 ---
 
-## ⚙️ Configuration (`settings.json`)
+## Configuration (`settings.json`)
 
 The system creates a `settings.json` file on first run. You can modify this to change behavior:
 
@@ -214,7 +214,7 @@ The system creates a `settings.json` file on first run. You can modify this to c
 
 ---
 
-### 6. 🔑 Gemini API Key Setup
+### 6. Gemini API Key Setup
 MonikAI uses Google's Gemini API for voice and intelligence. You need a free API key.
 
 1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey).
@@ -227,7 +227,7 @@ MonikAI uses Google's Gemini API for voice and intelligence. You need a free API
 
 ---
 
-## 🚀 Running MonikAI
+## Running MonikAI
 
 You have two options to run the app. Ensure your `monikai` environment is active!
 
@@ -258,7 +258,7 @@ npm run dev
 
 ---
 
-## ✅ First Flight Checklist (Things to Test)
+## First Flight Checklist (Things to Test)
 
 1. **Voice Check**: Say "Hello Monika". She should respond.
 2. **Vision Check**: Look at the camera or share your PC screen. If Face Auth is on, the lock screen should unlock.
@@ -269,20 +269,20 @@ npm run dev
 
 ## ▶️ Commands & Tools Reference
 
-### 🗣️ Voice Commands
+### Voice Commands
 - "Switch project to [Name]"
 - "Create a new project called [Name]"
 - "Turn on the [Room] light"
 - "Make the light [Color]"
 - "Pause audio" / "Stop audio"
 
-### 🌐 Web Agent
+### Web Agent
 - **Prompt**: "Go to Amazon and find a USB-C cable under $10."
 - **Note**: The agent will auto-scroll, click, and type. Do not interfere with the browser window while it runs. The web agent uses Playwright to control a Chromium browser instance. It can handle complex interactions like filling forms, clicking buttons, and navigating pages. However, it may struggle with CAPTCHAs, dynamic content loaded via JavaScript, or sites that heavily use anti-bot measures. If the agent gets stuck, you can manually intervene or restart the task.
 
 ---
 
-## ❓ Troubleshooting FAQ
+## Troubleshooting FAQ
 
 ### Camera not working / Permission denied (Mac)
 **Symptoms**: Error about camera access, or video feed shows black.
@@ -312,13 +312,13 @@ This is a server-side issue from the Gemini API. Simply reconnect by clicking th
 
 ---
 
-## 📸 What It Looks Like
+## What It Looks Like
 
 *Coming soon! Screenshots and demo videos will be added here.*
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 monikai/
@@ -346,7 +346,7 @@ monikai/
 
 ---
 
-## ⚠️ Known Limitations
+## Known Limitations
 
 | Limitation | Details |
 |------------|---------|
@@ -358,7 +358,7 @@ monikai/
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Here's how:
 
@@ -376,7 +376,7 @@ Contributions are welcome! Here's how:
 
 ---
 
-## 🔒 Security Considerations
+## Security Considerations
 
 | Aspect | Implementation |
 |--------|----------------|
@@ -390,7 +390,7 @@ Contributions are welcome! Here's how:
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - **[Google Gemini](https://deepmind.google/technologies/gemini/)** — Native Audio API for real-time voice
 - **[build123d](https://github.com/gumyr/build123d)** — Modern parametric CAD library
@@ -399,13 +399,13 @@ Contributions are welcome! Here's how:
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
 ---
 
 <p align="center">
-  <strong>Built with 🤖 by tosutosu</strong><br>
-  <em>Bridging the AI girlfriends we always wanted</em>
+  <strong>Built with AI by tosutosu</strong><br>
+  <em>Bridging the robot waifus we always wanted</em>
 </p>
