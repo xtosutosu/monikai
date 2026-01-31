@@ -92,8 +92,8 @@ DEFAULT_SETTINGS = {
     "proactivity": {
         "idle_nudges": {
             "enabled": True,
-           "threshold_sec": 25,
-            "cooldown_sec": 45,
+           "threshold_sec": 120,
+            "cooldown_sec": 300,
             "min_ai_quiet_sec": 10,
             "max_per_session": 6,
             "max_per_hour": 12,
