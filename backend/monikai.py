@@ -356,6 +356,31 @@ get_print_status_tool = {
     "parameters": {"type": "OBJECT", "properties": {"printer": {"type": "STRING", "description": "Printer name or IP address."}}, "required": ["printer"]},
 }
 
+# --- MAS KNOWLEDGE TOOLS ---
+get_random_fact_tool = {
+    "name": "get_random_fact",
+    "description": "Gets a random fact from Monika's knowledge base to enrich conversations.",
+    "parameters": {"type": "OBJECT", "properties": {}},
+}
+
+get_random_greeting_tool = {
+    "name": "get_random_greeting",
+    "description": "Gets a random greeting from Monika's personality database.",
+    "parameters": {"type": "OBJECT", "properties": {}},
+}
+
+get_random_farewell_tool = {
+    "name": "get_random_farewell",
+    "description": "Gets a random farewell from Monika's personality database.",
+    "parameters": {"type": "OBJECT", "properties": {}},
+}
+
+get_random_topic_tool = {
+    "name": "get_random_topic",
+    "description": "Gets a random conversation topic from Monika's knowledge.",
+    "parameters": {"type": "OBJECT", "properties": {}},
+}
+
 # Avoid duplicate tool names when merging from tools.py
 _reserved_tool_names = {
     "run_web_agent",
@@ -407,6 +432,10 @@ tools = [
             update_work_memory_tool,
             commit_work_memory_tool,
             clear_work_memory_tool,
+            get_random_fact_tool,
+            get_random_greeting_tool,
+            get_random_farewell_tool,
+            get_random_topic_tool,
         ]
         + _extra_decls
     },
@@ -1313,6 +1342,10 @@ class AudioLoop:
                                 "control_light",
                                 "discover_printers",
                                 "get_print_status",
+                                "get_random_fact",
+                                "get_random_greeting",
+                                "get_random_farewell",
+                                "get_random_topic",
                             ]:
                                 prompt = fc.args.get("prompt", "")
 
@@ -1620,6 +1653,52 @@ class AudioLoop:
                                         result_str = f"Could not get status for printer '{printer}'. Ensure it is discovered first."
 
                                     function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
+                                elif fc.name == "get_random_fact":
+                                    import json
+                                    import random
+                                    try:
+                                        with open("backend/facts.json", "r", encoding="utf-8") as f:
+                                            facts = json.load(f)
+                                        fact = random.choice(facts) if facts else "No facts available."
+                                        function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": fact}))
+                                    except Exception as e:
+                                        function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": f"Error: {e}"}))
+
+                                elif fc.name == "get_random_greeting":
+                                    import json
+                                    import random
+                                    try:
+                                        with open("backend/samples.json", "r", encoding="utf-8") as f:
+                                            data = json.load(f)
+                                        greetings = data.get("greetings", [])
+                                        greeting = random.choice(greetings) if greetings else "Hello!"
+                                        function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": greeting}))
+                                    except Exception as e:
+                                        function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": f"Error: {e}"}))
+
+                                elif fc.name == "get_random_farewell":
+                                    import json
+                                    import random
+                                    try:
+                                        with open("backend/samples.json", "r", encoding="utf-8") as f:
+                                            data = json.load(f)
+                                        farewells = data.get("farewells", [])
+                                        farewell = random.choice(farewells) if farewells else "Goodbye!"
+                                        function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": farewell}))
+                                    except Exception as e:
+                                        function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": f"Error: {e}"}))
+
+                                elif fc.name == "get_random_topic":
+                                    import json
+                                    import random
+                                    try:
+                                        with open("backend/topics.json", "r", encoding="utf-8") as f:
+                                            topics = json.load(f)
+                                        topic = random.choice(topics) if topics else "No topics available."
+                                        function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": topic}))
+                                    except Exception as e:
+                                        function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": f"Error: {e}"}))
 
                         if function_responses:
                             await self.session.send_tool_response(function_responses=function_responses)
