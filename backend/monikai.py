@@ -807,7 +807,7 @@ class AudioLoop:
         if mode not in ("none", "camera", "screen"):
             return
         if mode != self.video_mode:
-            print(f"[ISABELLE DEBUG] [VIDEO] Mode changed: {self.video_mode} -> {mode}")
+            print(f"[AI DEBUG] [VIDEO] Mode changed: {self.video_mode} -> {mode}")
             self.video_mode = mode
             self._video_stream_enabled = True
 
@@ -879,7 +879,7 @@ class AudioLoop:
         return backend
 
     def update_permissions(self, new_perms):
-        print(f"[ISABELLE DEBUG] [CONFIG] Updating tool permissions: {new_perms}")
+        print(f"[AI DEBUG] [CONFIG] Updating tool permissions: {new_perms}")
         self.permissions.update(new_perms)
 
     def set_paused(self, paused: bool):
@@ -889,7 +889,7 @@ class AudioLoop:
         self.stop_event.set()
 
     def resolve_tool_confirmation(self, request_id, confirmed):
-        print(f"[ISABELLE DEBUG] [RESOLVE] resolve_tool_confirmation called. ID: {request_id}, Confirmed: {confirmed}")
+        print(f"[AI DEBUG] [RESOLVE] resolve_tool_confirmation called. ID: {request_id}, Confirmed: {confirmed}")
         if request_id in self._pending_confirmations:
             future = self._pending_confirmations[request_id]
             if not future.done():
@@ -904,9 +904,9 @@ class AudioLoop:
                 self.audio_in_queue.get_nowait()
                 count += 1
             if count > 0:
-                print(f"[ISABELLE DEBUG] [AUDIO] Cleared {count} chunks from playback queue due to interruption.")
+                print(f"[AI DEBUG] [AUDIO] Cleared {count} chunks from playback queue due to interruption.")
         except Exception as e:
-            print(f"[ISABELLE DEBUG] [ERR] Failed to clear audio queue: {e}")
+            print(f"[AI DEBUG] [ERR] Failed to clear audio queue: {e}")
 
     # ----------------------------------------------------------------------------------
     # Proactivity helpers (idle nudges)
@@ -1010,13 +1010,12 @@ class AudioLoop:
                 continue
 
             topic = self._topic_hint()
-            hint = f"Ostatni kontekst: {topic}." if topic else ""
+            hint = f"Last Context: {topic}." if topic else ""
 
             msg = (
-                "System Notification: Użytkownik jest cicho od dłuższej chwili. "
-                "Zrób krótkie, ciepłe „check-in” po polsku: "
-                "1 krótkie zdanie + 1 otwarte pytanie ALBO 2 krótkie propozycje tematu. "
-                "Nie moralizuj, nie naciskaj, zachowaj opcjonalność. "
+                "System Notification: Hmm, seems that the user has been inactive for a while."
+                "Maybe I can gently nudge them with a question or suggestion to re-engage."
+                "However, I shouldn't be too pushy or interrupt them if they are focused."
                 + hint
             )
 
@@ -1025,7 +1024,7 @@ class AudioLoop:
                 self._record_nudge()
                 self.mark_ai_activity()
             except Exception as e:
-                print(f"[ISABELLE DEBUG] [NUDGE] Failed to send idle nudge: {e}")
+                print(f"[AI DEBUG] [NUDGE] Failed to send idle nudge: {e}")
 
     async def send_frame(self, frame_data):
         if self.video_mode != "camera":
@@ -1052,7 +1051,7 @@ class AudioLoop:
             try:
                 await self.session.send(input=msg, end_of_turn=False)
             except Exception as e:
-                print(f"[ISABELLE DEBUG] [SEND] Failed to send realtime chunk: {e}")
+                print(f"[AI DEBUG] [SEND] Failed to send realtime chunk: {e}")
 
     async def send_frame_now(self, payload: Optional[dict] = None) -> bool:
         if not self.out_queue:
@@ -1084,7 +1083,7 @@ class AudioLoop:
         resolved_input_device_index = None
 
         if self.input_device_name:
-            print(f"[ISABELLE] Attempting to find input device matching: '{self.input_device_name}'")
+            print(f"[AI DEBUG] Attempting to find input device matching: '{self.input_device_name}'")
             count = pya.get_device_count()
             best_match = None
             for i in range(count):
@@ -1100,20 +1099,20 @@ class AudioLoop:
                 except Exception:
                     continue
             if resolved_input_device_index is not None:
-                print(f"[ISABELLE] Resolved input device '{self.input_device_name}' to index {resolved_input_device_index} ({best_match})")
+                print(f"[AI DEBUG] Resolved input device '{self.input_device_name}' to index {resolved_input_device_index} ({best_match})")
             else:
-                print(f"[ISABELLE] Could not find device matching '{self.input_device_name}'. Checking index...")
+                print(f"[AI DEBUG] Could not find device matching '{self.input_device_name}'. Checking index...")
 
         if resolved_input_device_index is None and self.input_device_index is not None:
             try:
                 resolved_input_device_index = int(self.input_device_index)
-                print(f"[ISABELLE] Requesting Input Device Index: {resolved_input_device_index}")
+                print(f"[AI DEBUG] Requesting Input Device Index: {resolved_input_device_index}")
             except ValueError:
-                print(f"[ISABELLE] Invalid device index '{self.input_device_index}', reverting to default.")
+                print(f"[AI DEBUG] Invalid device index '{self.input_device_index}', reverting to default.")
                 resolved_input_device_index = None
 
         if resolved_input_device_index is None:
-            print("[ISABELLE] Using Default Input Device")
+            print("[AI DEBUG] Using Default Input Device")
 
         try:
             self.audio_stream = await asyncio.to_thread(
@@ -1126,8 +1125,8 @@ class AudioLoop:
                 frames_per_buffer=CHUNK_SIZE,
             )
         except OSError as e:
-            print(f"[ISABELLE] [ERR] Failed to open audio input stream: {e}")
-            print("[ISABELLE] [WARN] Audio features will be disabled. Please check microphone permissions.")
+            print(f"[AI DEBUG] [ERR] Failed to open audio input stream: {e}")
+            print("[AI DEBUG] [WARN] Audio features will be disabled. Please check microphone permissions.")
             return
 
         kwargs = {"exception_on_overflow": False} if __debug__ else {}
@@ -1159,17 +1158,17 @@ class AudioLoop:
                     self._silence_start_time = None
                     if not self._is_speaking:
                         self._is_speaking = True
-                        print(f"[ISABELLE DEBUG] [VAD] Speech Detected (RMS: {rms}). Sending Video Frame.")
+                        print(f"[AI DEBUG] [VAD] Speech Detected (RMS: {rms}). Sending Video Frame.")
                         if self._latest_image_payload and self.out_queue:
                             await self.out_queue.put(self._latest_image_payload)
                         else:
-                            print(f"[ISABELLE DEBUG] [VAD] No video frame available to send.")
+                            print(f"[AI DEBUG] [VAD] No video frame available to send.")
                 else:
                     if self._is_speaking:
                         if self._silence_start_time is None:
                             self._silence_start_time = time.time()
                         elif time.time() - self._silence_start_time > SILENCE_DURATION:
-                            print("[ISABELLE DEBUG] [VAD] Silence detected. Resetting speech state.")
+                            print("[AI DEBUG] [VAD] Silence detected. Resetting speech state.")
                             self._is_speaking = False
                             self._silence_start_time = None
 
@@ -1178,14 +1177,13 @@ class AudioLoop:
                 await asyncio.sleep(0.1)
 
     async def handle_write_file(self, path, content):
-        print(f"[ISABELLE DEBUG] [FS] Writing file: '{path}'")
-
+        print(f"[AI DEBUG] [FS] Writing file: '{path}'")
         if self.project_manager.current_project == "temp":
             import datetime as _dt
 
             timestamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
             new_project_name = f"Project_{timestamp}"
-            print(f"[ISABELLE DEBUG] [FS] Auto-creating project: {new_project_name}")
+            print(f"[AI DEBUG] [FS] Auto-creating project: {new_project_name}")
 
             success, msg = self.project_manager.create_project(new_project_name)
             if success:
@@ -1198,7 +1196,7 @@ class AudioLoop:
                     if self.on_project_update:
                         self.on_project_update(new_project_name)
                 except Exception as e:
-                    print(f"[ISABELLE DEBUG] [ERR] Failed to notify auto-project: {e}")
+                    print(f"[AI DEBUG] [ERR] Failed to notify auto-project: {e}")
 
         filename = os.path.basename(path)
         current_project_path = self.project_manager.get_current_project_path()
@@ -1206,7 +1204,7 @@ class AudioLoop:
         if not os.path.isabs(path):
             final_path = current_project_path / path
 
-        print(f"[ISABELLE DEBUG] [FS] Resolved path: '{final_path}'")
+        print(f"[AI DEBUG] [FS] Resolved path: '{final_path}'")
 
         try:
             os.makedirs(os.path.dirname(final_path), exist_ok=True)
@@ -1219,10 +1217,10 @@ class AudioLoop:
         try:
             await self.session.send(input=f"System Notification: {result}", end_of_turn=True)
         except Exception as e:
-            print(f"[ISABELLE DEBUG] [ERR] Failed to send fs result: {e}")
+            print(f"[AI DEBUG] [ERR] Failed to send fs result: {e}")
 
     async def handle_read_directory(self, path):
-        print(f"[ISABELLE DEBUG] [FS] Reading directory: '{path}'")
+        print(f"[AI DEBUG] [FS] Reading directory: '{path}'")
         try:
             if not os.path.exists(path):
                 result = f"Directory '{path}' does not exist."
@@ -1235,10 +1233,10 @@ class AudioLoop:
         try:
             await self.session.send(input=f"System Notification: {result}", end_of_turn=True)
         except Exception as e:
-            print(f"[ISABELLE DEBUG] [ERR] Failed to send fs result: {e}")
+            print(f"[AI DEBUG] [ERR] Failed to send fs result: {e}")
 
     async def handle_read_file(self, path):
-        print(f"[ISABELLE DEBUG] [FS] Reading file: '{path}'")
+        print(f"[AI DEBUG] [FS] Reading file: '{path}'")
         try:
             if not os.path.exists(path):
                 result = f"File '{path}' does not exist."
@@ -1252,22 +1250,22 @@ class AudioLoop:
         try:
             await self.session.send(input=f"System Notification: {result}", end_of_turn=True)
         except Exception as e:
-            print(f"[ISABELLE DEBUG] [ERR] Failed to send fs result: {e}")
+            print(f"[AI DEBUG] [ERR] Failed to send fs result: {e}")
 
     async def handle_web_agent_request(self, prompt):
-        print(f"[ISABELLE DEBUG] [WEB] Web Agent Task: '{prompt}'")
+        print(f"[AI DEBUG] [WEB] Web Agent Task: '{prompt}'")
 
         async def update_frontend(image_b64, log_text):
             if self.on_web_data:
                 self.on_web_data({"image": image_b64, "log": log_text})
 
         result = await self.web_agent.run_task(prompt, update_callback=update_frontend)
-        print(f"[ISABELLE DEBUG] [WEB] Web Agent Task Returned: {result}")
+        print(f"[AI DEBUG] [WEB] Web Agent Task Returned: {result}")
 
         try:
             await self.session.send(input=f"System Notification: Web Agent has finished.\nResult: {result}", end_of_turn=True)
         except Exception as e:
-            print(f"[ISABELLE DEBUG] [ERR] Failed to send web agent result to model: {e}")
+            print(f"[AI DEBUG] [ERR] Failed to send web agent result to model: {e}")
 
     async def receive_audio(self):
         try:
@@ -1356,7 +1354,7 @@ class AudioLoop:
                                         import uuid
 
                                         request_id = str(uuid.uuid4())
-                                        print(f"[ISABELLE DEBUG] [STOP] Requesting confirmation for '{fc.name}' (ID: {request_id})")
+                                        print(f"[AI DEBUG] [STOP] Requesting confirmation for '{fc.name}' (ID: {request_id})")
 
                                         future = asyncio.Future()
                                         self._pending_confirmations[request_id] = future
@@ -1512,7 +1510,7 @@ class AudioLoop:
                                         try:
                                             await self.session.send(input=f"System Notification: {msg}\n\n{context}", end_of_turn=False)
                                         except Exception as e:
-                                            print(f"[ISABELLE DEBUG] [ERR] Failed to send project context: {e}")
+                                            print(f"[AI DEBUG] [ERR] Failed to send project context: {e}")
 
                                     function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": msg}))
 
@@ -1807,7 +1805,7 @@ class AudioLoop:
             now = time.time()
             if (now - self._last_screen_error_ts) > 3.0:
                 self._last_screen_error_ts = now
-                print(f"[ISABELLE DEBUG] [SCREEN] Capture error: {e}")
+                print(f"[AI DEBUG] [SCREEN] Capture error: {e}")
             return None
 
     async def get_screen(self):
@@ -1834,7 +1832,7 @@ class AudioLoop:
 
         while not self.stop_event.is_set():
             try:
-                print("[ISABELLE DEBUG] [CONNECT] Connecting to Gemini Live API...")
+                print("[AI DEBUG] [CONNECT] Connecting to Gemini Live API...")
                 async with (
                     client.aio.live.connect(model=MODEL, config=config) as session,
                     asyncio.TaskGroup() as tg,
@@ -1860,7 +1858,7 @@ class AudioLoop:
                             "System Notification:\n"
                             f"Current local date and time: {ctx['iso']}\n"
                             f"Time zone: {ctx['timezone']} ({ctx['mode']})\n"
-                            "Always interpret temporal references using this time zone.\n"
+                            "Do not mention the timezone to the user, just make sure it matches their time zone.\n"
                         )
                         await self.session.send(input=time_message, end_of_turn=False)
 
@@ -1868,49 +1866,48 @@ class AudioLoop:
                             scope = "ekran" if self.video_mode == "screen" else "kamerę"
                             await self.session.send(
                                 input=(
-                                    f"System Notification: Aktywny tryb obrazu ({self.video_mode}). "
-                                    f"Masz dostęp do opisu obrazu z {scope} użytkownika (na podstawie zrzutów)."
+                                    f"System Notification: Currently Active Video Mode: ({self.video_mode}). "
+                                    f"It appears that my scope is {scope}."
                                 ),
                                 end_of_turn=False,
                             )
 
                         if start_message:
-                            print(f"[ISABELLE DEBUG] [INFO] Sending start message: {start_message}")
+                            print(f"[AI DEBUG] [INFO] Sending start message: {start_message}")
                             await self.session.send(input=start_message, end_of_turn=True)
 
                         if self.on_project_update and self.project_manager:
                             self.on_project_update(self.project_manager.current_project)
 
                     else:
-                        print("[ISABELLE DEBUG] [RECONNECT] Connection restored.")
+                        print("[AI DEBUG] [RECONNECT] Connection restored.")
                         history = self.project_manager.get_recent_chat_history(limit=10)
 
                         context_msg = (
-                            "System Notification: Connection was lost and just re-established. "
-                            "Here is the recent chat history to help you resume seamlessly:\n\n"
+                            "System Notification: I seemed to space out a bit, but I'm back now!"
+                            "Let me see the recent chat history:\n\n"
                         )
                         for entry in history:
                             sender = entry.get("sender", "Unknown")
                             text = entry.get("text", "")
                             context_msg += f"[{sender}]: {text}\n"
 
-                        context_msg += "\nSay something casual like 'Heeeeej' and resume the conversation naturally without mentioning any disconnection or reconnection."
+                        context_msg += "\nI won't mention that I was disconnected. I will try to subtly go on as if nothing happened."
                         await self.session.send(input=context_msg, end_of_turn=True)
 
                     retry_delay = 1
                     await self.stop_event.wait()
 
             except asyncio.CancelledError:
-                print("[ISABELLE DEBUG] [STOP] Main loop cancelled.")
+                print("[AI DEBUG] [STOP] Main loop cancelled.")
                 break
 
             except Exception as e:
-                print(f"[ISABELLE DEBUG] [ERR] Connection Error: {e}")
-
+                print(f"[AI DEBUG] [ERR] Connection Error: {e}")
                 if self.stop_event.is_set():
                     break
 
-                print(f"[ISABELLE DEBUG] [RETRY] Reconnecting in {retry_delay} seconds...")
+                print(f"[AI DEBUG] [RETRY] Reconnecting in {retry_delay} seconds...")
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, 10)
                 is_reconnect = True
