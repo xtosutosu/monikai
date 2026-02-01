@@ -12,7 +12,7 @@ MonikAI is a sophisticated AI conversation partner and assistant designed for mu
 
 ---
 
-## 🌟 Capabilities at a Glance
+## Capabilities
 
 | Feature | Description | Technology |
 |---------|-------------|------------|
@@ -25,7 +25,7 @@ MonikAI is a sophisticated AI conversation partner and assistant designed for mu
 | **Smart Home** | Voice control for TP-Link Kasa devices | `python-kasa` |
 | **Project Memory** | Persistent context across sessions | File-based JSON storage | Separate from Long-Term Memory |
 
-### � Application Notes
+### Application Notes
 
 - **Voice Interaction**: The low-latency voice feature allows for natural conversations with the AI. You can interrupt the AI at any time, and it will respond contextually. The system uses Gemini 2.5's native audio capabilities for real-time processing.
 
