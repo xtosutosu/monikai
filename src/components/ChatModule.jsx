@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Paperclip, X, Maximize2, Minimize2, FileText } from "lucide-react";
+import TopAudioBar from "./TopAudioBar";
 
 const MAX_FILES = 6;
 const MAX_FILE_BYTES = 12 * 1024 * 1024; // 12 MB per file
@@ -137,6 +138,8 @@ const ChatModule = ({
   height = 420,
   onMouseDown,
   zIndex = 50,
+  userSpeaking,
+  micAudioData,
 }) => {
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -465,121 +468,132 @@ const ChatModule = ({
             "rounded-2xl border border-white/[0.14]",
             "bg-black/35 backdrop-blur-sm",
             "px-4 py-3",
+            "relative",
           ].join(" ")}
           style={{ minHeight: INPUT_H }}
         >
-          <textarea
-            ref={textareaRef}
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder="Napisz wiadomość… (Enter = wyślij, Shift+Enter = nowa linia)"
-            rows={2}
-            className={[
-              "w-full resize-none",
-              "bg-transparent outline-none",
-              "text-[15px] text-white/90",
-              "placeholder:text-white/35",
-              "leading-relaxed",
-            ].join(" ")}
-          />
+          {/* Background Visualizer - always visible when speaking */}
+          {userSpeaking && (
+            <div className="absolute inset-0 flex justify-center items-center py-2 pointer-events-none opacity-60">
+              <TopAudioBar audioData={micAudioData} />
+            </div>
+          )}
 
-          {/* Attachments preview */}
-          {attachments.length ? (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {attachments.map((a) => {
-                const isImage = (a.file?.type || "").startsWith("image/");
-                return (
-                  <div
-                    key={a.id}
-                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl border border-white/12 bg-white/[0.05]"
-                    title={`${a.file?.name} (${Math.round((a.file?.size || 0) / 1024)} KB)`}
-                  >
-                    {isImage && a.previewUrl ? (
-                      <img
-                        src={a.previewUrl}
-                        alt={a.file?.name}
-                        className="h-7 w-7 rounded-lg object-cover border border-white/10"
-                      />
-                    ) : (
-                      <div className="h-7 w-7 rounded-lg bg-black/30 border border-white/10 flex items-center justify-center text-[10px] text-white/50">
-                        FILE
-                      </div>
-                    )}
-                    <div className="max-w-[240px] truncate text-[12px] text-white/75">
-                      {a.file?.name}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => removeAttachment(a.id)}
-                      className="text-white/35 hover:text-white/70 transition"
-                      title="Usuń"
+          {/* Foreground Content - always visible */}
+          <div className="relative z-10">
+            <textarea
+              ref={textareaRef}
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder="Napisz wiadomość… (Enter = wyślij, Shift+Enter = nowa linia)"
+              rows={2}
+              className={[
+                "w-full resize-none",
+                "bg-transparent outline-none",
+                "text-[15px] text-white/90",
+                "placeholder:text-white/35",
+                "leading-relaxed",
+              ].join(" ")}
+            />
+
+            {/* Attachments preview */}
+            {attachments.length ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {attachments.map((a) => {
+                  const isImage = (a.file?.type || "").startsWith("image/");
+                  return (
+                    <div
+                      key={a.id}
+                      className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl border border-white/12 bg-white/[0.05]"
+                      title={`${a.file?.name} (${Math.round((a.file?.size || 0) / 1024)} KB)`}
                     >
-                      <X size={14} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
+                      {isImage && a.previewUrl ? (
+                        <img
+                          src={a.previewUrl}
+                          alt={a.file?.name}
+                          className="h-7 w-7 rounded-lg object-cover border border-white/10"
+                        />
+                      ) : (
+                        <div className="h-7 w-7 rounded-lg bg-black/30 border border-white/10 flex items-center justify-center text-[10px] text-white/50">
+                          FILE
+                        </div>
+                      )}
+                      <div className="max-w-[240px] truncate text-[12px] text-white/75">
+                        {a.file?.name}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(a.id)}
+                        className="text-white/35 hover:text-white/70 transition"
+                        title="Usuń"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
 
-          {attachError ? <div className="mt-2 text-[11px] text-red-300/80">{attachError}</div> : null}
+            {attachError ? <div className="mt-2 text-[11px] text-red-300/80">{attachError}</div> : null}
 
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <div className="text-[11px] text-white/35">
-              Enter: wyślij · Shift+Enter: nowa linia
-              {attachments.length ? (
-                <span className="ml-2 text-white/25">
-                  · Załączniki: {attachments.length}/{MAX_FILES} · {Math.round(totalAttachBytes / 1024)} KB
-                </span>
-              ) : null}
-            </div>
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <div className="text-[11px] text-white/35">
+                Enter: wyślij · Shift+Enter: nowa linia
+                {attachments.length ? (
+                  <span className="ml-2 text-white/25">
+                    · Załączniki: {attachments.length}/{MAX_FILES} · {Math.round(totalAttachBytes / 1024)} KB
+                  </span>
+                ) : null}
+              </div>
 
-            <div className="flex items-center gap-2">
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept="image/*,.txt,.md,.json,.csv,.log,.pdf"
-                onChange={(e) => addFiles(e.target.files)}
-                className="hidden"
-              />
+              <div className="flex items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,.txt,.md,.json,.csv,.log,.pdf"
+                  onChange={(e) => addFiles(e.target.files)}
+                  className="hidden"
+                />
 
-              <button
-                type="button"
-                onClick={onPickFiles}
-                className={[
-                  "px-3 py-1.5 rounded-xl",
-                  "border border-white/15",
-                  "text-[12px] tracking-[0.18em] uppercase",
-                  "transition-all",
-                  "bg-white/[0.04] hover:bg-white/[0.08] text-white/70",
-                ].join(" ")}
-                title="Dodaj załącznik"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <Paperclip size={14} />
-                  Załącz
-                </span>
-              </button>
+                <button
+                  type="button"
+                  onClick={onPickFiles}
+                  className={[
+                    "px-3 py-1.5 rounded-xl",
+                    "border border-white/15",
+                    "text-[12px] tracking-[0.18em] uppercase",
+                    "transition-all",
+                    "bg-white/[0.04] hover:bg-white/[0.08] text-white/70",
+                  ].join(" ")}
+                  title="Dodaj załącznik"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <Paperclip size={14} />
+                    Załącz
+                  </span>
+                </button>
 
-              <button
-                type="button"
-                onClick={onClickSend}
-                disabled={!canSend}
-                className={[
-                  "px-4 py-1.5 rounded-xl",
-                  "border border-white/15",
-                  "text-[12px] tracking-[0.18em] uppercase",
-                  "transition-all",
-                  canSend
-                    ? "bg-white/[0.08] hover:bg-white/[0.12] text-white/80"
-                    : "bg-white/[0.04] text-white/30 cursor-not-allowed",
-                ].join(" ")}
-                title={canSend ? "Wyślij" : "Wpisz wiadomość lub dodaj załącznik"}
-              >
-                Wyślij
-              </button>
+                <button
+                  type="button"
+                  onClick={onClickSend}
+                  disabled={!canSend}
+                  className={[
+                    "px-4 py-1.5 rounded-xl",
+                    "border border-white/15",
+                    "text-[12px] tracking-[0.18em] uppercase",
+                    "transition-all",
+                    canSend
+                      ? "bg-white/[0.08] hover:bg-white/[0.12] text-white/80"
+                      : "bg-white/[0.04] text-white/30 cursor-not-allowed",
+                  ].join(" ")}
+                  title={canSend ? "Wyślij" : "Wpisz wiadomość lub dodaj załącznik"}
+                >
+                  Wyślij
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -8,20 +8,14 @@ class ProjectManager:
     def __init__(self, workspace_root: str):
         self.workspace_root = Path(workspace_root)
         self.projects_dir = self.workspace_root / "projects"
-        self.current_project = "temp"
+        self.current_project = "default"
         
         # Ensure projects root exists
         if not self.projects_dir.exists():
             self.projects_dir.mkdir(parents=True)
             
-        # Clear temp project on startup if it exists
-        temp_path = self.projects_dir / "temp"
-        if temp_path.exists():
-            print("[ProjectManager] Clearing temp project...")
-            shutil.rmtree(temp_path)
-            
-        # Ensure temp project receives fresh creation
-        self.create_project("temp")
+        # Ensure default project exists
+        self.create_project("default")
 
     def create_project(self, name: str):
         """Creates a new project directory with subfolders."""

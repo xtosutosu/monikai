@@ -2,7 +2,6 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import io from 'socket.io-client';
 
 import Visualizer from './components/Visualizer';
-import TopAudioBar from './components/TopAudioBar';
 import BrowserWindow from './components/BrowserWindow';
 import ChatModule from './components/ChatModule';
 import ToolsModule from './components/ToolsModule';
@@ -1454,11 +1453,6 @@ const handleSend = (e) => {
           )}
         </div>
 
-        {/* Top Visualizer (User Mic) */}
-        <div className="flex-1 flex justify-center mx-4">
-          <TopAudioBar audioData={micAudioData} />
-        </div>
-
         <div className="flex items-center gap-2 pr-2" style={{ WebkitAppRegion: 'no-drag' }}>
           <div className="flex items-center gap-1.5 text-[12px] text-white/60 px-2">
             <Clock size={12} className="text-white/35" />
@@ -1638,6 +1632,8 @@ const handleSend = (e) => {
           width={elementSizes.chat.w}
           height={elementSizes.chat.h}
           onMouseDown={() => {}}
+          userSpeaking={userSpeaking}
+          micAudioData={micAudioData}
         />
 
         {/* Footer Controls / Tools Module */}

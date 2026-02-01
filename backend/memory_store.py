@@ -22,32 +22,78 @@ class MemoryStore:
     - Optional snapshots are saved to long_term_memory/snapshots/.
     """
 
-    def __init__(self, base_dir: Path, emit_event: Optional[Callable[[Dict[str, Any]], None]] = None):
+    def __init__(self, base_dir: Path, emit_event: Optional[Callable[[Dict[str, Any]], None]] = None, language: str = "pl"):
         self.base_dir = Path(base_dir).resolve()
         self.emit_event = emit_event
+        self.language = language
 
-        # Heuristic extractors (PL)
-        self._name_re = re.compile(
-            r"(?:nazywam\s+się|mam\s+na\s+imię|moje\s+imię\s+to|imię\s+to|jestem\s+tu\s+jako|to\s+ja)\s+"
-            r"([A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż][A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż\-]{1,30})",
-            re.IGNORECASE,
-        )
-        self._name_re2 = re.compile(
-            r"\bjestem\s+([A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż][A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż\-]{1,30})"
-            r"(?!\s*(?:ok|okej|dobrze|gotowy|spoko|szczęśliwy|szczesliwy|zmęczony|zmeczony|głodny|glodny|"
-            r"zajęty|zajety|chory))",
-            re.IGNORECASE,
-        )
+        # Language-specific configurations
+        self.LANG_CONFIG = {
+            "pl": {
+                "name_re": re.compile(
+                    r"(?:nazywam\s+się|mam\s+na\s+imię|moje\s+imię\s+to|imię\s+to|jestem\s+tu\s+jako|to\s+ja)\s+"
+                    r"([A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż][A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż\-]{1,30})",
+                    re.IGNORECASE,
+                ),
+                "name_re2": re.compile(
+                    r"\bjestem\s+([A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż][A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż\-]{1,30})"
+                    r"(?!\s*(?:ok|okej|dobrze|gotowy|spoko|szczęśliwy|szczesliwy|zmęczony|zmeczony|głodny|glodny|"
+                    r"zajęty|zajety|chory))",
+                    re.IGNORECASE,
+                ),
+                "date_re": re.compile(r"\b(\d{1,2})[\./-](\d{1,2})[\./-](\d{4})\b"),
+                "pref_re": re.compile(
+                    r"\b(?:wolę|wole|preferuję|preferuje|lubię|lubie|nie lubię|nie lubie|nie chcę|nie chce)\b",
+                    re.IGNORECASE,
+                ),
+                "routine_re": re.compile(
+                    r"\b(?:codziennie|zwykle|najczęściej|najczesciej|rano|wieczorem|w weekendy)\b",
+                    re.IGNORECASE,
+                ),
+                "dob_keywords": ["urodzi", "urodzin", "data urod"],
+                "context_keywords": ["mam", "mój", "moja", "moje", "pracuję", "pracuje", "robię", "robie", "chciałbym", "chcialbym"],
+                "single_token_name_re": re.compile(r"[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]{1,30}"),
+            },
+            "en": {
+                "name_re": re.compile(
+                    r"(?:my\s+name\s+is|i'm\s+called|i\s+am|call\s+me)\s+"
+                    r"([A-Za-z][A-Za-z\-]{1,30})",
+                    re.IGNORECASE,
+                ),
+                "name_re2": re.compile(
+                    r"\bi'm\s+([A-Za-z][A-Za-z\-]{1,30})"
+                    r"(?!\s*(?:ok|okay|good|ready|happy|tired|hungry|busy|sick))",
+                    re.IGNORECASE,
+                ),
+                "date_re": re.compile(r"\b(\d{1,2})[\./-](\d{1,2})[\./-](\d{4})\b"), # M/D/Y vs D/M/Y might need locale
+                "pref_re": re.compile(
+                    r"\b(?:i\s+prefer|i\s+like|i\s+don't\s+like|i\s+do\s+not\s+like|i\s+want|i\s+don't\s+want)\b",
+                    re.IGNORECASE,
+                ),
+                "routine_re": re.compile(
+                    r"\b(?:every\s+day|usually|often|in\s+the\s+morning|in\s+the\s+evening|on\s+weekends)\b",
+                    re.IGNORECASE,
+                ),
+                "dob_keywords": ["born", "birthday", "date of birth"],
+                "context_keywords": ["i have", "my", "i work", "i do", "i'd like", "i would like"],
+                "single_token_name_re": re.compile(r"[A-Z][a-z]{1,30}"),
+            },
+        }
+
+        # Select the configuration for the chosen language
+        config = self.LANG_CONFIG.get(self.language, self.LANG_CONFIG["pl"])
+
+        self._name_re = config["name_re"]
+        self._name_re2 = config["name_re2"]
+        self._date_re = config["date_re"]
+        self._pref_re = config["pref_re"]
+        self._routine_re = config["routine_re"]
+        self._dob_keywords = config["dob_keywords"]
+        self._context_keywords = config["context_keywords"]
+        self._single_token_name_re = config["single_token_name_re"]
+        
+        # Generic regex
         self._date_iso_re = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
-        self._date_pl_re = re.compile(r"\b(\d{1,2})[\./-](\d{1,2})[\./-](\d{4})\b")
-        self._pref_re = re.compile(
-            r"\b(?:wolę|wole|preferuję|preferuje|lubię|lubie|nie lubię|nie lubie|nie chcę|nie chce)\b",
-            re.IGNORECASE,
-        )
-        self._routine_re = re.compile(
-            r"\b(?:codziennie|zwykle|najczęściej|najczesciej|rano|wieczorem|w weekendy)\b",
-            re.IGNORECASE,
-        )
 
     # ----------------------------------------------------------------------------------
     # Paths / bootstrap
@@ -405,7 +451,7 @@ def clear_work(self) -> str:
 
         # Single-token name
         if "name" not in set_obj:
-            if not existing_name and re.fullmatch(r"[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]{1,30}", text):
+            if not existing_name and self._single_token_name_re.fullmatch(text):
                 set_obj["name"] = text
                 notes.append("Captured single-token name from user turn.")
 
@@ -415,12 +461,19 @@ def clear_work(self) -> str:
         if mi:
             dob = f"{mi.group(1)}-{mi.group(2)}-{mi.group(3)}"
         else:
-            mp = self._date_pl_re.search(text)
+            mp = self._date_re.search(text)
             if mp:
-                dd, mm, yyyy = int(mp.group(1)), int(mp.group(2)), int(mp.group(3))
-                if 1 <= dd <= 31 and 1 <= mm <= 12:
+                d1, d2, yyyy = int(mp.group(1)), int(mp.group(2)), int(mp.group(3))
+                # Basic validation, might need improvement for M/D vs D/M
+                if 1 <= d1 <= 31 and 1 <= d2 <= 12:
+                     # Heuristic for D/M/Y vs M/D/Y. If first is > 12, it's likely day.
+                    if self.language == 'en' and d2 > 12: # M/D format with day > 12
+                        mm, dd = d2, d1
+                    else: # D/M format or ambiguous M/D
+                        dd, mm = d1, d2
                     dob = f"{yyyy:04d}-{mm:02d}-{dd:02d}"
-        if dob and ("urodzi" in lower or "urodzin" in lower or "data urod" in lower):
+
+        if dob and any(kw in lower for kw in self._dob_keywords):
             if existing_profile.get("date_of_birth") != dob:
                 set_obj["date_of_birth"] = dob
 
@@ -432,7 +485,7 @@ def clear_work(self) -> str:
 
         # General context note (only if it looks like stable-ish info)
         if not set_obj and not notes:
-            if any(tok in lower for tok in ["mam", "mój", "moja", "moje", "pracuję", "pracuje", "robię", "robie", "chciałbym", "chcialbym"]):
+            if any(kw in lower for kw in self._context_keywords):
                 notes.append(f"Life/context: {text}")
 
         if set_obj or notes:

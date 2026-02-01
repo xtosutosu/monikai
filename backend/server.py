@@ -157,7 +157,7 @@ async def status():
 
 @sio.event
 async def connect(sid, environ):
-    print(f"Client connected: {sid}")
+    print(f"[SYSTEM NOTIFICATION] Client connected: {sid}")
     await sio.emit('status', {'msg': 'Connected to MonikAI Backend'}, room=sid)
 
     global authenticator
@@ -207,11 +207,11 @@ async def start_audio(sid, data=None):
     # Only block if auth is ENABLED and not authenticated
     if SETTINGS.get("face_auth_enabled", False):
         if authenticator and not authenticator.authenticated:
-            print("Blocked start_audio: Not authenticated.")
+            print("[SYSTEM ERROR] Blocked start_audio: Not authenticated.")
             await sio.emit('error', {'msg': 'Authentication Required'})
             return
 
-    print("Starting Audio Loop...")
+    print("[SYSTEM NOTIFICATION] Starting Audio Loop...")
     
     device_index = None
     device_name = None
@@ -221,19 +221,19 @@ async def start_audio(sid, data=None):
         if 'device_name' in data:
             device_name = data['device_name']
             
-    print(f"Using input device: Name='{device_name}', Index={device_index}")
+    print(f"[SYSTEM NOTIFICATION] Using input device: Name='{device_name}', Index={device_index}")
     
     if loop_task and not loop_task.done():
-        print("Audio loop already running. Re-connecting client to session.")
+        print("[SYSTEM NOTIFICATION] Audio loop already running. Re-connecting client to session.")
         await sio.emit('status', {'msg': 'MonikAI Already Running'})
         return
     if audio_loop:
         if loop_task and (loop_task.done() or loop_task.cancelled()):
-            print("Audio loop task appeared finished/cancelled. Clearing and restarting...")
+            print("[SYSTEM NOTIFICATION] Audio loop task appeared finished/cancelled. Clearing and restarting...")
             audio_loop = None
             loop_task = None
         else:
-            print("Audio loop already running. Re-connecting client to session.")
+            print("[SYSTEM NOTIFICATION] Audio loop already running. Re-connecting client to session.")
             await sio.emit('status', {'msg': 'MonikAI Already Running'})
             return
 
@@ -269,30 +269,32 @@ async def start_audio(sid, data=None):
     # Callback to send Confirmation Request to frontend
     def on_tool_confirmation(data):
         # data = {"id": "uuid", "tool": "tool_name", "args": {...}}
-        print(f"Requesting confirmation for tool: {data.get('tool')}")
+        tool_name = data.get('tool', 'unknown')
+        print(f"[SYSTEM NOTIFICATION] Requesting confirmation for tool: {tool_name}")
         asyncio.create_task(sio.emit('tool_confirmation_request', data))
 
     # Callback to send Project Update to frontend
     def on_project_update(project_name):
-        print(f"Sending Project Update: {project_name}")
+        print(f"[SYSTEM NOTIFICATION] Project updated to: {project_name}")
         asyncio.create_task(sio.emit('project_update', {'project': project_name}))
 
     # Callback to send Device Update to frontend
     def on_device_update(devices):
         # devices is a list of dicts
-        print(f"Sending Kasa Device Update: {len(devices)} devices")
+        print(f"[SYSTEM NOTIFICATION] Smart device list updated: {len(devices)} devices found.")
         asyncio.create_task(sio.emit('kasa_devices', devices))
 
     # Callback to send Notes update to frontend
     def on_notes_update(payload):
         try:
+            print("[SYSTEM NOTIFICATION] Notes were updated.")
             asyncio.create_task(sio.emit('notes_data', payload))
         except Exception:
             pass
 
     # Callback to send Error to frontend
     def on_error(msg):
-        print(f"Sending Error to frontend: {msg}")
+        print(f"[SYSTEM ERROR] {msg}")
         asyncio.create_task(sio.emit('error', {'msg': msg}))
 
     # Callback to send Vision Frames (screen/camera) to frontend
@@ -305,6 +307,8 @@ async def start_audio(sid, data=None):
     # Callback to send a reminder/timer alarm event to frontend (for ringing / notifications)
     def on_reminder_fired(payload):
         try:
+            message = payload.get('message', 'No message')
+            print(f"[SYSTEM NOTIFICATION] Reminder fired: {message}")
             asyncio.create_task(sio.emit('reminder_fired', payload))
             # Also push an updated list so UI stays consistent
             asyncio.create_task(sio.emit('reminders_list', {'reminders': _serialize_reminders()}))
@@ -325,7 +329,7 @@ async def start_audio(sid, data=None):
         else:
             video_mode = str(SETTINGS.get("video_mode", "none")).lower()
 
-        print(f"Initializing AudioLoop with device_index={device_index}, video_mode={video_mode}")
+        print(f"[SYSTEM NOTIFICATION] Initializing AudioLoop with device_index={device_index}, video_mode={video_mode}")
         audio_loop = monikai.AudioLoop(
             video_mode=video_mode,
             on_audio_data=on_audio_data,
@@ -345,7 +349,7 @@ async def start_audio(sid, data=None):
             kasa_agent=kasa_agent
             
         )
-        print("AudioLoop initialized successfully.")
+        print("[SYSTEM NOTIFICATION] AudioLoop initialized successfully.")
         try:
             audio_loop.note_user_activity("start_audio")
         except Exception:
@@ -356,10 +360,10 @@ async def start_audio(sid, data=None):
         
         # Check initial mute state
         if data and data.get('muted', False):
-            print("Starting with Audio Paused")
+            print("[SYSTEM NOTIFICATION] Starting with Audio Paused")
             audio_loop.set_paused(True)
 
-        print("Creating asyncio task for AudioLoop.run()")
+        print("[SYSTEM NOTIFICATION] Creating asyncio task for AudioLoop.run()")
         loop_task = asyncio.create_task(audio_loop.run())
         
         # Add a done callback to catch silent failures in the loop
@@ -367,18 +371,18 @@ async def start_audio(sid, data=None):
             try:
                 task.result()
             except asyncio.CancelledError:
-                print("Audio Loop Cancelled")
+                print("[SYSTEM NOTIFICATION] Audio Loop Cancelled")
             except Exception as e:
-                print(f"Audio Loop Crashed: {e}")
+                print(f"[SYSTEM ERROR] Audio Loop Crashed: {e}")
                 # You could emit 'error' here if you have context
         
         loop_task.add_done_callback(handle_loop_exit)
         
-        print("Emitting 'MonikAI Started'")
+        print("[SYSTEM NOTIFICATION] MonikAI Started")
         await sio.emit('status', {'msg': 'MonikAI Started'})
         
     except Exception as e:
-        print(f"CRITICAL ERROR STARTING MonikAI: {e}")
+        print(f"[SYSTEM ERROR] CRITICAL ERROR STARTING MonikAI: {e}")
         import traceback
         traceback.print_exc()
         await sio.emit('error', {'msg': f"Failed to start: {str(e)}"})
@@ -389,7 +393,7 @@ async def stop_audio(sid):
     global audio_loop
     if audio_loop:
         audio_loop.stop() 
-        print("Stopping Audio Loop")
+        print("[SYSTEM NOTIFICATION] Stopping Audio Loop")
     # Ensure background task is fully stopped to avoid duplicate sessions
     global loop_task
     if loop_task and not loop_task.done():
@@ -400,6 +404,7 @@ async def stop_audio(sid):
             pass
         loop_task = None
     audio_loop = None
+    print("[SYSTEM NOTIFICATION] MonikAI Stopped")
     await sio.emit('status', {'msg': 'MonikAI Stopped'})
 
 @sio.event
@@ -407,7 +412,7 @@ async def pause_audio(sid):
     global audio_loop
     if audio_loop:
         audio_loop.set_paused(True)
-        print("Pausing Audio")
+        print("[SYSTEM NOTIFICATION] Audio Paused")
         await sio.emit('status', {'msg': 'Audio Paused'})
 
 @sio.event
@@ -415,7 +420,7 @@ async def resume_audio(sid):
     global audio_loop
     if audio_loop:
         audio_loop.set_paused(False)
-        print("Resuming Audio")
+        print("[SYSTEM NOTIFICATION] Audio Resumed")
         await sio.emit('status', {'msg': 'Audio Resumed'})
 
 
