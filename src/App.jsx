@@ -240,7 +240,7 @@ function App() {
 
   // Z-Index Stacking Order (last element = highest z-index)
   const [zIndexOrder, setZIndexOrder] = useState([
-    'visualizer', 'chat', 'tools', 'video', 'browser', 'kasa', 'printer', 'reminders', 'notes'
+    'visualizer', 'chat', 'tools', 'video', 'browser', 'kasa', 'reminders', 'notes'
   ]);
 
   // ---------------------------------------------------------------------
@@ -494,7 +494,13 @@ function App() {
     });
 
     socket.on('status', (data) => {
-      addMessage('System', data.msg);
+      let displayMsg = data.msg;
+
+      // Persona translation for status messages
+      if (data.msg === 'MonikAI Started') displayMsg = "I'm fully awake and ready.";
+      else if (data.msg === 'MonikAI Stopped') displayMsg = "I'm disconnecting for a moment.";
+
+      addMessage('System', displayMsg);
       if (data.msg === 'MonikAI Started') {
         setStatus('Model Connected');
       } else if (data.msg === 'MonikAI Stopped') {
@@ -543,7 +549,7 @@ function App() {
 
     socket.on('error', (data) => {
       console.error("Socket Error:", data);
-      addMessage('System', `Error: ${data.msg}`);
+      addMessage('System', `Something feels off... (${data.msg})`);
     });
 
     socket.on('browser_frame', (data) => {
@@ -622,7 +628,7 @@ function App() {
     socket.on('project_update', (data) => {
       console.log("Project Update:", data.project);
       setCurrentProject(data.project);
-      addMessage('System', `Switched to project: ${data.project}`);
+      addMessage('System', `I'm now focusing on project: ${data.project}`);
     });
 
     socket.on('printer_list', (list) => {
@@ -706,10 +712,10 @@ function App() {
           numHands: 1
         });
 
-        addMessage('System', 'Hand Tracking Ready');
+        addMessage('System', 'I can see your hand gestures now.');
       } catch (error) {
         console.error("Failed to initialize HandLandmarker:", error);
-        addMessage('System', `Hand Tracking Error: ${error.message}`);
+        addMessage('System', `I'm having trouble tracking your hands: ${error.message}`);
       }
     };
     initHandLandmarker();
@@ -851,7 +857,7 @@ function App() {
 
     } catch (err) {
       console.error("Error accessing camera:", err);
-      addMessage('System', 'Error accessing camera');
+      addMessage('System', "I'm having trouble accessing the camera.");
     }
   };
 
@@ -1232,13 +1238,13 @@ const handleSend = (e) => {
         const textContent = event.target.result;
         if (typeof textContent === 'string' && textContent.length > 0) {
           socket.emit('upload_memory', { memory: textContent });
-          addMessage('System', 'Uploading memory...');
+          addMessage('System', 'Reading that file into my memory...');
         } else {
-          addMessage('System', 'Empty or invalid memory file');
+          addMessage('System', 'That file seems empty or invalid.');
         }
       } catch (err) {
         console.error("Error reading file:", err);
-        addMessage('System', 'Error reading memory file');
+        addMessage('System', 'I had trouble reading that memory file.');
       }
     };
     reader.readAsText(file);
@@ -1478,28 +1484,33 @@ const handleSend = (e) => {
         {toasts.map(t => (
           <div
             key={t.id}
-            className="pointer-events-auto w-[360px] max-w-[calc(100vw-24px)] rounded-2xl border border-white/15 bg-black/55 backdrop-blur-xl shadow-[0_20px_80px_rgba(0,0,0,0.55)] overflow-hidden"
+            className="pointer-events-auto w-[360px] max-w-[calc(100vw-24px)] rounded-2xl border border-cyan-500/30 bg-black/80 backdrop-blur-xl shadow-[0_0_30px_rgba(34,211,238,0.15)] overflow-hidden relative"
           >
-            <div className="px-4 py-3 flex items-start justify-between gap-3">
+            <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay"></div>
+
+            <div className="relative z-10 px-4 py-3 flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-[10px] tracking-[0.22em] uppercase text-white/55">
-                  SYSTEM
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_5px_cyan]"></div>
+                  <div className="text-[10px] tracking-[0.22em] uppercase text-cyan-500 font-mono font-bold">
+                    MONIKA
+                  </div>
                 </div>
-                <div className="mt-1 text-[13px] leading-relaxed text-white/85 break-words">
+                <div className="text-[13px] leading-relaxed text-cyan-100/90 break-words font-mono">
                   {t.text}
                 </div>
               </div>
 
               <button
                 onClick={() => dismissToast(t.id)}
-                className="shrink-0 p-1 rounded-lg hover:bg-white/10 text-white/70"
-                title="Zamknij"
+                className="shrink-0 p-1 rounded-lg hover:bg-cyan-900/30 text-cyan-600 hover:text-cyan-400 transition-colors"
+                title="Dismiss"
               >
-                ✕
+                <X size={14} />
               </button>
             </div>
 
-            <div className="h-[2px] w-full bg-gradient-to-r from-transparent via-white/25 to-transparent opacity-70" />
+            <div className="relative z-10 h-[1px] w-full bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent opacity-70" />
           </div>
         ))}
       </div>

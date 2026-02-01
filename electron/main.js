@@ -36,7 +36,7 @@ function createWindow() {
 
         loadPromise
             .then(() => {
-                console.log('Frontend loaded successfully!');
+                console.log('I have loaded the frontend loaded successfully!');
                 windowWasShown = true;
                 mainWindow.show();
                 if (isDev && process.env.SHOW_DEVTOOLS === 'true') {
