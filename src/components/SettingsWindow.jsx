@@ -2,30 +2,29 @@ import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 
 const TOOLS = [
-    // { id: 'generate_cad', label: 'Generate CAD' },
-    { id: 'get_time_context', label: 'Time Context' },
     { id: 'create_reminder', label: 'Create Reminder' },
     { id: 'list_reminders', label: 'List Reminders' },
     { id: 'cancel_reminder', label: 'Cancel Reminder' },
+
+    { id: 'notes', label: 'Create and Read Notes' },
 
     { id: 'update_work_memory', label: 'Update Work Memory' },
     { id: 'get_work_memory', label: 'Get Work Memory' },
     { id: 'commit_work_memory', label: 'Commit Work Memory' },
     { id: 'clear_work_memory', label: 'Clear Work Memory' },
+
     { id: 'run_web_agent', label: 'Web Agent' },
     { id: 'create_directory', label: 'Create Folder' },
     { id: 'write_file', label: 'Write File' },
     { id: 'read_directory', label: 'Read Directory' },
     { id: 'read_file', label: 'Read File' },
-    { id: 'notes', label: 'Notes' },
+
     { id: 'create_project', label: 'Create Project' },
     { id: 'switch_project', label: 'Switch Project' },
     { id: 'list_projects', label: 'List Projects' },
+
     { id: 'list_smart_devices', label: 'List Devices' },
     { id: 'control_light', label: 'Control Light' },
-    // { id: 'discover_printers', label: 'Discover Printers' },
-    // { id: 'print_stl', label: 'Print 3D Model' },
-    // { id: 'iterate_cad', label: 'Iterate CAD' },
 ];
 
 const SettingsWindow = ({
@@ -101,7 +100,7 @@ const SettingsWindow = ({
     return (
         <div className="absolute top-20 right-10 bg-black/90 border border-cyan-500/50 p-4 rounded-lg z-50 w-80 backdrop-blur-xl shadow-[0_0_30px_rgba(6,182,212,0.2)]">
             <div className="flex justify-between items-center mb-4 border-b border-cyan-900/50 pb-2">
-                <h2 className="text-cyan-400 font-bold text-sm uppercase tracking-wider">Settings</h2>
+                <h2 className="text-cyan-400 font-bold text-sm uppercase tracking-wider">OUR SETTINGS</h2>
                 <button onClick={onClose} className="text-cyan-600 hover:text-cyan-400">
                     <X size={16} />
                 </button>
@@ -109,9 +108,9 @@ const SettingsWindow = ({
 
             {/* Authentication Section */}
             <div className="mb-6">
-                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">Security</h3>
+                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">SECURITY</h3>
                 <div className="flex items-center justify-between text-xs bg-gray-900/50 p-2 rounded border border-cyan-900/30">
-                    <span className="text-cyan-100/80">Face Authentication</span>
+                    <span className="text-cyan-100/80">Face Recognition</span>
                     <button
                         onClick={toggleFaceAuth}
                         className={`relative w-8 h-4 rounded-full transition-colors duration-200 ${faceAuthEnabled ? 'bg-cyan-500/80' : 'bg-gray-700'}`}
@@ -125,7 +124,7 @@ const SettingsWindow = ({
 
             {/* Microphone Section */}
             <div className="mb-4">
-                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">Microphone</h3>
+                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">MY HEARING (MICROPHONE)</h3>
                 <select
                     value={selectedMicId}
                     onChange={(e) => setSelectedMicId(e.target.value)}
@@ -141,7 +140,7 @@ const SettingsWindow = ({
 
             {/* Speaker Section */}
             <div className="mb-4">
-                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">Speaker</h3>
+                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">MY VOICE (SPEAKER)</h3>
                 <select
                     value={selectedSpeakerId}
                     onChange={(e) => setSelectedSpeakerId(e.target.value)}
@@ -157,7 +156,7 @@ const SettingsWindow = ({
 
             {/* Webcam Section */}
             <div className="mb-6">
-                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">Webcam</h3>
+                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">MY SIGHT (CAMERA)</h3>
                 <select
                     value={selectedWebcamId}
                     onChange={(e) => setSelectedWebcamId(e.target.value)}
@@ -174,7 +173,7 @@ const SettingsWindow = ({
             {/* Cursor Section */}
             <div className="mb-6">
                 <div className="flex justify-between mb-2">
-                    <h3 className="text-cyan-400 font-bold text-xs uppercase tracking-wider opacity-80">Cursor Sensitivity</h3>
+                    <h3 className="text-cyan-400 font-bold text-xs uppercase tracking-wider opacity-80">CURSOR CONTROL</h3>
                     <span className="text-xs text-cyan-500">{cursorSensitivity}x</span>
                 </div>
                 <input
@@ -190,9 +189,9 @@ const SettingsWindow = ({
 
             {/* Gesture Control Section */}
             <div className="mb-6">
-                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">Gesture Control</h3>
+                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">GESTURES</h3>
                 <div className="flex items-center justify-between text-xs bg-gray-900/50 p-2 rounded border border-cyan-900/30">
-                    <span className="text-cyan-100/80">Flip Camera Horizontal</span>
+                    <span className="text-cyan-100/80">Mirror Vision</span>
                     <button
                         onClick={toggleCameraFlip}
                         className={`relative w-8 h-4 rounded-full transition-colors duration-200 ${isCameraFlipped ? 'bg-cyan-500/80' : 'bg-gray-700'}`}
@@ -206,7 +205,7 @@ const SettingsWindow = ({
 
             {/* Tool Permissions Section */}
             <div className="mb-6">
-                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">Tool Confirmations</h3>
+                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">SHOULD I ASK FOR PERMISSION FOR...</h3>
                 <div className="space-y-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
                     {TOOLS.map(tool => {
                         const isRequired = permissions[tool.id] !== false; // Default True
@@ -229,9 +228,9 @@ const SettingsWindow = ({
 
             {/* Memory Section */}
             <div>
-                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">Memory Data</h3>
+                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">MEMORY MANAGEMENT</h3>
                 <div className="flex flex-col gap-2">
-                    <label className="text-[10px] text-cyan-500/60 uppercase">Upload Memory Text</label>
+                    <label className="text-[10px] text-cyan-500/60 uppercase">Import a File for Me to Remember</label>
                     <input
                         type="file"
                         accept=".txt"
