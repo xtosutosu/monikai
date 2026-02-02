@@ -3,10 +3,7 @@ import { X, FileText } from 'lucide-react';
 
 const NotesWindow = ({
     socket,
-    position,
     onClose,
-    onMouseDown,
-    zIndex = 40
 }) => {
     const [notesText, setNotesText] = useState('');
     const [project, setProject] = useState('temp');
@@ -83,48 +80,33 @@ const NotesWindow = ({
     };
 
     return (
-        <div
-            id="notes"
-            onMouseDown={onMouseDown}
-            className="absolute flex flex-col gap-3 p-4 rounded-xl backdrop-blur-md bg-gradient-to-br from-[#1b1a17]/95 via-[#1f1b16]/92 to-[#15110d]/92 border border-[#f5d27a]/20 shadow-[0_0_28px_rgba(0,0,0,0.55)] select-none"
-            style={{
-                left: position.x,
-                top: position.y,
-                width: '500px',
-                minHeight: '550px',
-                transform: 'translate(-50%, -50%)',
-                zIndex
-            }}
-        >
+        <div className="w-full h-full flex flex-col gap-3 p-4">
             {/* Header */}
-            <div data-drag-handle className="flex items-center justify-between pb-2 border-b border-white/10 cursor-grab active:cursor-grabbing">
+            <div data-drag-handle className="flex items-center justify-between pb-2 border-b border-white/10 cursor-grab active:cursor-grabbing select-none">
                 <div className="flex items-center gap-2">
                     <FileText size={16} className="text-[#f5d27a]/90" />
-                    <h3 className="font-bold text-[#f5d27a] tracking-wider text-sm">
-                        Notatnik
-                    </h3>
+                    <h3 className="font-bold text-[#f5d27a] tracking-wider text-sm">NOTATKI</h3>
+                    <span className="text-xs text-white/40 font-mono ml-2">{project}</span>
                 </div>
                 <div className="flex items-center gap-1">
-                    <span className="text-[10px] text-white/35 mr-2">{status}</span>
+                    <span className="text-xs text-white/40 transition-opacity duration-300">{status}</span>
                     <button
                         onClick={onClose}
                         className="p-1 rounded hover:bg-white/10 transition-colors text-white/50 hover:text-white"
-                        title="Zamknij"
+                        title="Close"
                     >
                         <X size={16} />
                     </button>
                 </div>
             </div>
 
-            {/* Body */}
-            <div className="flex flex-col gap-2">
+            <div className="flex-1 flex flex-col">
                 <textarea
                     ref={textareaRef}
                     value={notesText}
                     onChange={handleChange}
                     placeholder="Będę dla Ciebie tutaj notować ważne rzeczy~"
-                    rows={25}
-                    className="w-full resize-none rounded-lg bg-[#1a1712]/70 border border-[#f5d27a]/15 p-3 text-[13px] text-white/90 outline-none shadow-inner shadow-black/40"
+                    className="w-full h-full flex-1 resize-none rounded-lg bg-[#1a1712]/70 border border-[#f5d27a]/15 p-3 text-[13px] text-white/90 outline-none shadow-inner shadow-black/40"
                 />
             </div>
         </div>

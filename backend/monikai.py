@@ -16,6 +16,7 @@ import time
 import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+import uuid
 from pathlib import Path
 from memory_store import MemoryStore
 
@@ -105,6 +106,72 @@ def get_time_context() -> dict:
 
 
 # --------------------------------------------------------------------------------------
+# Local Calendar (project-based)
+# --------------------------------------------------------------------------------------
+@dataclass
+class CalendarEvent:
+    id: str
+    summary: str
+    start_iso: str
+    end_iso: str
+    description: Optional[str] = None
+
+class CalendarManager:
+    def __init__(self, project_manager: Any, on_update: Optional[Callable[[], Any]] = None):
+        self.project_manager = project_manager
+        self.on_update = on_update
+        self.events: Dict[str, CalendarEvent] = {}
+
+    def _save(self):
+        data = [e.__dict__ for e in self.events.values()]
+        try:
+            file_path = self.project_manager.get_current_project_path() / "calendar.json"
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            if self.on_update:
+                self.on_update()
+        except Exception as e:
+            print(f"[AI DEBUG] [CALENDAR] Failed to save events: {e}")
+
+    def load(self):
+        file_path = self.project_manager.get_current_project_path() / "calendar.json"
+        if not os.path.exists(file_path):
+            return
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            self.events.clear()
+            for item in data:
+                event = CalendarEvent(**item)
+                self.events[event.id] = event
+            if self.on_update:
+                self.on_update()
+        except Exception as e:
+            print(f"[AI DEBUG] [CALENDAR] Failed to load events: {e}")
+
+    def create_event(self, summary: str, start_iso: str, end_iso: str, description: Optional[str] = None) -> CalendarEvent:
+        event_id = str(uuid.uuid4())
+        event = CalendarEvent(id=event_id, summary=summary, start_iso=start_iso, end_iso=end_iso, description=description)
+        self.events[event_id] = event
+        self._save()
+        return event
+
+    def list_events(self, start_range_iso: str, end_range_iso: str) -> list[CalendarEvent]:
+        start_range = datetime.fromisoformat(start_range_iso.replace('Z', '+00:00'))
+        end_range = datetime.fromisoformat(end_range_iso.replace('Z', '+00:00'))
+        results = [e for e in self.events.values() if start_range <= datetime.fromisoformat(e.start_iso.replace('Z', '+00:00')) < end_range]
+        results.sort(key=lambda e: e.start_iso)
+        return results
+
+    def delete_event(self, event_id: str) -> bool:
+        if event_id in self.events:
+            del self.events[event_id]
+            self._save()
+            return True
+        return False
+
+# --------------------------------------------------------------------------------------
 # Timer / Reminders (in-process asyncio scheduler)
 # --------------------------------------------------------------------------------------
 @dataclass
@@ -117,11 +184,64 @@ class Reminder:
 
 
 class ReminderManager:
-    def __init__(self, get_time_context_fn: Callable[[], dict], on_reminder: Optional[Callable[[Reminder], Any]] = None):
+    def __init__(self, get_time_context_fn: Callable[[], dict], project_manager: Any, on_reminder: Optional[Callable[[Reminder], Any]] = None):
         self.get_time_context_fn = get_time_context_fn
+        self.project_manager = project_manager
         self.on_reminder = on_reminder
         self.reminders: Dict[str, Reminder] = {}
         self.tasks: Dict[str, asyncio.Task] = {}
+
+    def _save(self):
+        data = []
+        for r in self.reminders.values():
+            data.append({
+                "id": r.id,
+                "message": r.message,
+                "when_iso": r.when_iso,
+                "speak": r.speak,
+                "alert": getattr(r, "alert", True),
+            })
+        try:
+            file_path = self.project_manager.get_current_project_path() / "reminders.json"
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[AI DEBUG] [REMINDERS] Failed to save reminders: {e}")
+
+    def load(self):
+        file_path = self.project_manager.get_current_project_path() / "reminders.json"
+        if not os.path.exists(file_path):
+            return
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            for item in data:
+                rid = item["id"]
+                if rid in self.reminders:
+                    continue
+                try:
+                    when_iso = item["when_iso"]
+                    when = datetime.fromisoformat(when_iso)
+                    reminder = Reminder(
+                        id=rid,
+                        message=item["message"],
+                        when_iso=when_iso,
+                        speak=item.get("speak", True),
+                        alert=item.get("alert", True),
+                    )
+                    self.reminders[rid] = reminder
+                    self.tasks[rid] = asyncio.create_task(self._runner(reminder, when))
+                except Exception as e:
+                    print(f"[AI DEBUG] [REMINDERS] Skipping invalid reminder item: {e}")
+        except Exception as e:
+            print(f"[AI DEBUG] [REMINDERS] Failed to load reminders: {e}")
+
+    def clear(self):
+        for task in self.tasks.values():
+            task.cancel()
+        self.tasks.clear()
+        self.reminders.clear()
 
     def _now(self) -> datetime:
         ctx = self.get_time_context_fn()
@@ -145,6 +265,7 @@ class ReminderManager:
                 await maybe
 
         self.reminders.pop(reminder.id, None)
+        self._save()
         task = self.tasks.pop(reminder.id, None)
         if task:
             try:
@@ -162,8 +283,6 @@ class ReminderManager:
         alert: bool = True,
         dedup_window_sec: int = 60,
     ) -> Reminder:
-        import uuid
-
         message = (message or "").strip()
         if not message:
             raise ValueError("Message is required.")
@@ -211,6 +330,7 @@ class ReminderManager:
         )
         self.reminders[rid] = reminder
         self.tasks[rid] = asyncio.create_task(self._runner(reminder, when))
+        self._save()
         return reminder
 
     def list(self):
@@ -223,12 +343,50 @@ class ReminderManager:
         existed = rid in self.reminders
         self.reminders.pop(rid, None)
         self.tasks.pop(rid, None)
+        if existed:
+            self._save()
         return existed
 
 
 # --------------------------------------------------------------------------------------
 # Tool (Function) Definitions
 # --------------------------------------------------------------------------------------
+
+# --- Local Calendar Tools ---
+create_local_event_tool = {
+    "name": "create_local_event",
+    "description": "Creates a new event in the local calendar. Requires a summary, and start and end times in ISO 8601 format.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "summary": {"type": "STRING", "description": "The title or summary of the event."},
+            "start_iso": {"type": "STRING", "description": "The start time of the event in ISO 8601 format (e.g., '2024-05-21T10:00:00Z')."},
+            "end_iso": {"type": "STRING", "description": "The end time of the event in ISO 8601 format (e.g., '2024-05-21T11:00:00Z')."},
+            "description": {"type": "STRING", "description": "An optional longer description for the event."},
+        },
+        "required": ["summary", "start_iso", "end_iso"],
+    },
+}
+
+list_local_events_tool = {
+    "name": "list_local_events",
+    "description": "Lists events from the local calendar within a specified time range.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "start_range_iso": {"type": "STRING", "description": "The start of the time range in ISO 8601 format."},
+            "end_range_iso": {"type": "STRING", "description": "The end of the time range in ISO 8601 format."},
+        },
+        "required": ["start_range_iso", "end_range_iso"],
+    },
+}
+
+delete_local_event_tool = {
+    "name": "delete_local_event",
+    "description": "Deletes an event from the local calendar by its ID.",
+    "parameters": {"type": "OBJECT", "properties": {"event_id": {"type": "STRING", "description": "The unique ID of the event to delete."}}, "required": ["event_id"]},
+}
+
 get_time_context_tool = {
     "name": "get_time_context",
     "description": "Returns the current local date/time and time zone. Uses settings.json time_settings: mode=system/manual.",
@@ -427,6 +585,7 @@ tools = [
             get_random_topic_tool,
         ]
         + _extra_decls
+        + [create_local_event_tool, list_local_events_tool, delete_local_event_tool]
     },
 ]
 
@@ -488,6 +647,7 @@ class AudioLoop:
         on_device_update=None,
         on_error=None,
         on_reminder_fired=None,
+        on_calendar_update=None, # For local calendar
         input_device_index=None,
         input_device_name=None,
         output_device_index=None,
@@ -507,6 +667,7 @@ class AudioLoop:
         self.on_device_update = on_device_update
         self.on_error = on_error
         self.on_memory_event = on_memory_event
+        self.on_calendar_update = on_calendar_update
         self.on_reminder_fired = on_reminder_fired
 
         self.input_device_index = input_device_index
@@ -521,6 +682,7 @@ class AudioLoop:
 
         self._last_input_transcription = ""
         self._last_output_transcription = ""
+        self._is_new_turn = True
 
         self.session = None
 
@@ -551,10 +713,25 @@ class AudioLoop:
                 msg = f"System Notification: Reminder: {rem.message}. Please tell the user now."
                 await self.session.send(input=msg, end_of_turn=True)
 
-        self.reminder_manager = ReminderManager(get_time_context_fn=get_time_context, on_reminder=_on_reminder)
-
         self.web_agent = WebAgent()
         self.kasa_agent = kasa_agent if kasa_agent else KasaAgent()
+
+        # ProjectManager
+        from project_manager import ProjectManager
+
+        current_dir = Path(os.path.dirname(os.path.abspath(__file__)))
+        project_root = current_dir.parent
+        self.project_manager = ProjectManager(project_root)
+
+        # Local Calendar
+        def _on_calendar_update():
+            if self.on_calendar_update:
+                try:
+                    events = [e.__dict__ for e in self.calendar_manager.events.values()]
+                    self.on_calendar_update(events)
+                except Exception as e:
+                    print(f"[AI DEBUG] [CALENDAR] Failed to emit update: {e}")
+        self.calendar_manager = CalendarManager(project_manager=self.project_manager, on_update=_on_calendar_update)
 
         self.stop_event = asyncio.Event()
 
@@ -580,6 +757,10 @@ class AudioLoop:
                 "notes_get": False,
                 "notes_set": False,
                 "notes_append": False,
+                # Local Calendar Tools
+                "create_local_event": False,
+                "list_local_events": False,
+                "delete_local_event": True, # Deleting should require confirmation
             }
         )
 
@@ -592,6 +773,8 @@ class AudioLoop:
         self._video_stream_enabled = True
 
         # VAD State
+        self._reminders_loaded = False
+        self._calendar_loaded = False
         self._is_speaking = False
         self._silence_start_time = None
 
@@ -616,12 +799,7 @@ class AudioLoop:
         self._nudges_this_session = 0
         self._nudge_timestamps = deque()
 
-        # ProjectManager
-        from project_manager import ProjectManager
-
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(current_dir)
-        self.project_manager = ProjectManager(project_root)
+        self.reminder_manager = ReminderManager(get_time_context_fn=get_time_context, project_manager=self.project_manager, on_reminder=_on_reminder)
 
         # Initialize MemoryStore (writes to backend/user_memory/* and emits events to frontend)
         try:
@@ -672,6 +850,7 @@ class AudioLoop:
 
         self._last_input_transcription = ""
         self._last_output_transcription = ""
+        self._is_new_turn = True
 
     # ----------------------------------------------------------------------------------
     # Vision capture helpers (screen/camera)
@@ -1135,6 +1314,8 @@ class AudioLoop:
             success, msg = self.project_manager.create_project(new_project_name)
             if success:
                 self.project_manager.switch_project(new_project_name)
+                self.reminder_manager.clear()
+                self.reminder_manager.load()
                 try:
                     await self.session.send(
                         input=f"System Notification: Automatic Project Creation. Switched to new project '{new_project_name}'.",
@@ -1226,22 +1407,48 @@ class AudioLoop:
                         if response.server_content.input_transcription:
                             transcript = response.server_content.input_transcription.text
                             if transcript and transcript != self._last_input_transcription:
+                                is_correction = False
                                 delta = transcript
                                 if transcript.startswith(self._last_input_transcription):
                                     delta = transcript[len(self._last_input_transcription) :]
+                                elif self._last_input_transcription.startswith(transcript):
+                                    # Backtrack/Correction (New is substring of Old) -> Force replace
+                                    is_correction = True
+                                    delta = transcript
+                                else:
+                                    # Treat mismatch as new text to append (no deletion/replacement)
+                                    is_correction = False
+                                    # Only insert space if previous text ended with punctuation (sentence boundary)
+                                    if not transcript.startswith(" ") and not self._last_input_transcription.endswith(" "):
+                                        if re.search(r'[.!?]\s*$', self._last_input_transcription):
+                                            delta = " " + transcript
+                                        else:
+                                            delta = transcript
+                                    else:
+                                        delta = transcript
+
                                 self._last_input_transcription = transcript
-                                if delta:
+                                
+                                if delta or is_correction:
                                     self.mark_user_activity(delta)
                                     self.clear_audio_queue()
+                                    self._is_new_turn = True
                                     if self.on_transcription:
-                                        self.on_transcription({"sender": "Ty", "text": delta})
+                                        self.on_transcription({
+                                            "sender": "Ty", 
+                                            "text": transcript if is_correction else delta, 
+                                            "is_correction": is_correction
+                                        })
 
                                     if self.chat_buffer["sender"] != "Ty":
                                         if self.chat_buffer["sender"] and self.chat_buffer["text"].strip():
                                             self.project_manager.log_chat(self.chat_buffer["sender"], self.chat_buffer["text"])
-                                        self.chat_buffer = {"sender": "Ty", "text": delta}
+                                        self.chat_buffer = {"sender": "Ty", "text": transcript}
                                     else:
-                                        self.chat_buffer["text"] += delta
+                                        if is_correction:
+                                            self.chat_buffer["text"] = transcript
+                                        else:
+                                            self.chat_buffer["text"] += delta
 
                         if response.server_content.output_transcription:
                             transcript = response.server_content.output_transcription.text
@@ -1253,7 +1460,9 @@ class AudioLoop:
                                 if delta:
                                     self.mark_ai_activity()
                                     if self.on_transcription:
-                                        self.on_transcription({"sender": "AI", "text": delta})
+                                        self.on_transcription({"sender": "AI", "text": delta, "is_new": self._is_new_turn})
+
+                                    self._is_new_turn = False
 
                                     if self.chat_buffer["sender"] != "AI":
                                         if self.chat_buffer["sender"] and self.chat_buffer["text"].strip():
@@ -1261,6 +1470,9 @@ class AudioLoop:
                                         self.chat_buffer = {"sender": "AI", "text": delta}
                                     else:
                                         self.chat_buffer["text"] += delta
+
+                        if response.server_content.turn_complete:
+                            self.flush_chat()
 
                     if response.tool_call:
                         print("The tool was called")
@@ -1292,6 +1504,9 @@ class AudioLoop:
                                 "notes_get",
                                 "notes_set",
                                 "notes_append",
+                                "create_local_event",
+                                "list_local_events",
+                                "delete_local_event",
                             ]:
                                 prompt = fc.args.get("prompt", "")
 
@@ -1445,6 +1660,8 @@ class AudioLoop:
                                     if success:
                                         self.project_manager.switch_project(name)
                                         msg += f" Switched to '{name}'."
+                                        self.reminder_manager.clear()
+                                        self.reminder_manager.load()
                                         if self.on_project_update:
                                             self.on_project_update(name)
                                     function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": msg}))
@@ -1453,6 +1670,8 @@ class AudioLoop:
                                     name = fc.args["name"]
                                     success, msg = self.project_manager.switch_project(name)
                                     if success and self.on_project_update:
+                                        self.reminder_manager.clear()
+                                        self.reminder_manager.load()
                                         self.on_project_update(name)
                                         context = self.project_manager.get_project_context()
                                         try:
@@ -1653,6 +1872,49 @@ class AudioLoop:
                                         result_str = f"Error appending to notes: {e}"
                                     function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
 
+                                # --- Local Calendar Tools ---
+                                elif fc.name == "create_local_event":
+                                    try:
+                                        summary = fc.args.get("summary")
+                                        start_iso = fc.args.get("start_iso")
+                                        end_iso = fc.args.get("end_iso")
+                                        
+                                        if not summary or not start_iso or not end_iso:
+                                            raise ValueError("Missing required arguments (summary, start_iso, end_iso)")
+
+                                        event = self.calendar_manager.create_event(
+                                            summary=summary,
+                                            start_iso=start_iso,
+                                            end_iso=end_iso,
+                                            description=fc.args.get("description")
+                                        )
+                                        result_str = f"Event '{event.summary}' created with ID {event.id}."
+                                    except Exception as e:
+                                        result_str = f"Error creating event: {e}"
+                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
+                                elif fc.name == "list_local_events":
+                                    try:
+                                        events = self.calendar_manager.list_events(
+                                            start_range_iso=fc.args["start_range_iso"],
+                                            end_range_iso=fc.args["end_range_iso"]
+                                        )
+                                        if not events:
+                                            result_str = "No events found in that time range."
+                                        else:
+                                            result_str = "Found events:\n" + "\n".join([f"- ID: {e.id}, Start: {e.start_iso}, Summary: {e.summary}" for e in events])
+                                        # Also send structured data to UI
+                                        if self.on_calendar_update:
+                                            self.on_calendar_update([e.__dict__ for e in events])
+                                    except Exception as e:
+                                        result_str = f"Error listing events: {e}"
+                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
+                                elif fc.name == "delete_local_event":
+                                    deleted = self.calendar_manager.delete_event(fc.args["event_id"])
+                                    result_str = "Event deleted." if deleted else "Event not found."
+                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
                         if function_responses:
                             await self.session.send_tool_response(function_responses=function_responses)
 
@@ -1794,6 +2056,14 @@ class AudioLoop:
                 ):
                     self.session = session
 
+                    if not is_reconnect:
+                        if not self._reminders_loaded:
+                            self.reminder_manager.load()
+                            self._reminders_loaded = True
+                        if not self._calendar_loaded:
+                            self.calendar_manager.load()
+                            self._calendar_loaded = True
+
                     self.audio_in_queue = asyncio.Queue()
                     self.out_queue = asyncio.Queue(maxsize=10)
 
@@ -1836,6 +2106,8 @@ class AudioLoop:
 
                     else:
                         print("[AI DEBUG] [RECONNECT] Connection restored.")
+                        self.reminder_manager.load()
+                        self.calendar_manager.load()
                         history = self.project_manager.get_recent_chat_history(limit=10)
 
                         context_msg = (

@@ -10,13 +10,25 @@ import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 import ConfirmationPopup from './components/ConfirmationPopup';
 import AuthLock from './components/AuthLock';
 import KasaWindow from './components/KasaWindow';
-import PrinterWindow from './components/PrinterWindow';
 import SettingsWindow from './components/SettingsWindow';
 import RemindersWindow from './components/RemindersWindow';
 import NotesWindow from './components/NotesWindow';
+import CalendarWindow from './components/CalendarWindow';
 
 const socket = io('http://localhost:8000');
 const { ipcRenderer } = window.require('electron');
+
+const getDefaultPositions = () => ({
+  video: { x: 40, y: 80 },
+  visualizer: { x: window.innerWidth / 2, y: window.innerHeight / 2 - 150 }, // no longer used for VN
+  chat: { x: window.innerWidth / 2, y: window.innerHeight / 2 + 100 },       // will be docked
+  browser: { x: window.innerWidth / 2 - 300, y: window.innerHeight / 2 },
+  kasa: { x: window.innerWidth / 2, y: window.innerHeight / 2 + 50 },
+  reminders: { x: window.innerWidth / 2, y: window.innerHeight / 2 - 50 },
+  notes: { x: window.innerWidth / 2, y: window.innerHeight / 2 },
+  calendar: { x: window.innerWidth / 2, y: window.innerHeight / 2 + 100 },
+  tools: { x: window.innerWidth / 2, y: window.innerHeight - 100 }
+});
 
 function App() {
   // ---------------------------------------------------------------------
@@ -75,15 +87,11 @@ function App() {
 
   const [kasaDevices, setKasaDevices] = useState([]);
   const [showKasaWindow, setShowKasaWindow] = useState(false);
-  const [showPrinterWindow, setShowPrinterWindow] = useState(false);
   const [showRemindersWindow, setShowRemindersWindow] = useState(false);
   const [showNotesWindow, setShowNotesWindow] = useState(false);
   const [showBrowserWindow, setShowBrowserWindow] = useState(false);
+  const [showCalendarWindow, setShowCalendarWindow] = useState(false);
 
-  // Printing workflow status (for top toolbar display)
-  const [slicingStatus, setSlicingStatus] = useState({ active: false, percent: 0, message: '' });
-  const [activePrintStatus, setActivePrintStatus] = useState(null);
-  const [printerCount, setPrinterCount] = useState(0);
   const [currentTime, setCurrentTime] = useState(new Date());
 
   // ---------------------------------------------------------------------
@@ -212,17 +220,7 @@ function App() {
   // ---------------------------------------------------------------------
   const [isModularMode, setIsModularMode] = useState(false);
 
-  const [elementPositions, setElementPositions] = useState({
-    video: { x: 40, y: 80 },
-    visualizer: { x: window.innerWidth / 2, y: window.innerHeight / 2 - 150 }, // no longer used for VN
-    chat: { x: window.innerWidth / 2, y: window.innerHeight / 2 + 100 },       // will be docked
-    browser: { x: window.innerWidth / 2 - 300, y: window.innerHeight / 2 },
-    kasa: { x: window.innerWidth / 2 + 350, y: window.innerHeight / 2 - 100 },
-    printer: { x: window.innerWidth / 2 - 350, y: window.innerHeight / 2 - 100 },
-    reminders: { x: window.innerWidth / 2, y: window.innerHeight / 2 - 50 },
-    notes: { x: window.innerWidth / 2 + 360, y: window.innerHeight / 2 - 40 },
-    tools: { x: window.innerWidth / 2, y: window.innerHeight - 100 }
-  });
+  const [elementPositions, setElementPositions] = useState(getDefaultPositions);
 
   const [elementSizes, setElementSizes] = useState({
     visualizer: { w: 550, h: 350 }, // no longer used for VN
@@ -230,17 +228,17 @@ function App() {
     tools: { w: 500, h: 80 },
     browser: { w: 550, h: 380 },
     video: { w: 320, h: 180 },
-    kasa: { w: 300, h: 380 },
-    printer: { w: 380, h: 380 },
-    reminders: { w: 380, h: 420 },
-    notes: { w: 420, h: 360 }
+    kasa: { w: 320, h: 500 },
+    reminders: { w: 420, h: 560 },
+    notes: { w: 500, h: 600 },
+    calendar: { w: 420, h: 650 }
   });
 
   const [activeDragElement, setActiveDragElement] = useState(null);
 
   // Z-Index Stacking Order (last element = highest z-index)
   const [zIndexOrder, setZIndexOrder] = useState([
-    'visualizer', 'chat', 'tools', 'video', 'browser', 'kasa', 'reminders', 'notes'
+    'visualizer', 'chat', 'tools', 'video', 'browser', 'kasa', 'reminders', 'notes', 'calendar'
   ]);
 
   // ---------------------------------------------------------------------
@@ -317,6 +315,17 @@ function App() {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
+  const handleResetPosition = (windowId) => {
+    const defaultPositions = getDefaultPositions();
+    if (defaultPositions[windowId]) {
+      setElementPositions(prev => ({
+        ...prev,
+        [windowId]: defaultPositions[windowId]
+      }));
+      pushToast(`Pozycja okna '${windowId}' została zresetowana.`);
+    }
+  };
+
   // ---------------------------------------------------------------------
   // VN Dock Layout: chat is bottom textbox, leaving space for bottom tools
   // ---------------------------------------------------------------------
@@ -369,9 +378,8 @@ function App() {
     isHandTrackingEnabledRef.current = isHandTrackingEnabled;
     cursorSensitivityRef.current = cursorSensitivity;
     isCameraFlippedRef.current = isCameraFlipped;
-    console.log("[Ref Sync] Camera flipped ref updated to:", isCameraFlipped);
   }, [isModularMode, elementPositions, isHandTrackingEnabled, cursorSensitivity, isCameraFlipped]);
-
+  
   // Live Clock Update
   useEffect(() => {
     const timer = setInterval(() => {
@@ -461,7 +469,6 @@ function App() {
       hasAutoConnectedRef.current = true;
 
       socket.emit('list_kasa');
-      socket.emit('discover_printers');
 
       setTimeout(() => {
         const index = micDevices.findIndex(d => d.deviceId === selectedMicId);
@@ -568,20 +575,29 @@ function App() {
 
     socket.on('transcription', (data) => {
       setMessages(prev => {
-        const lastMsg = prev[prev.length - 1];
+        const list = prev || [];
+        const lastMsg = list[list.length - 1];
 
-        if (lastMsg && lastMsg.sender === data.sender) {
+        // Append only if same sender AND not a new turn
+        if (lastMsg && lastMsg.sender === data.sender && !data.is_new) {
+          if (data.is_correction) {
+            return [
+              ...list.slice(0, -1),
+              { ...lastMsg, text: data.text }
+            ];
+          }
           return [
-            ...prev.slice(0, -1),
+            ...list.slice(0, -1),
             { ...lastMsg, text: lastMsg.text + data.text }
           ];
-        } else {
-          return [...prev, {
-            sender: data.sender,
-            text: data.text,
-            time: new Date().toLocaleTimeString()
-          }];
         }
+
+        // Otherwise create new bubble
+        return [...list, {
+          sender: data.sender,
+          text: data.text,
+          time: new Date().toLocaleTimeString()
+        }];
       });
     });
 
@@ -590,16 +606,9 @@ function App() {
       setConfirmationRequest(data);
     });
 
-    socket.on('request_print_window', () => {
-      setShowPrinterWindow(true);
-      const size = { w: 380, h: 380 };
-      const clamped = clampToViewport({ x: window.innerWidth / 2, y: window.innerHeight / 2 }, size);
-      setElementPositions(prev => ({ ...prev, printer: clamped }));
-    });
-
     socket.on('kasa_devices', (devices) => {
       console.log("Kasa Devices:", devices);
-      setKasaDevices(devices);
+      setKasaDevices(Array.isArray(devices) ? devices : []);
     });
 
     socket.on('kasa_update', (data) => {
@@ -629,34 +638,6 @@ function App() {
       console.log("Project Update:", data.project);
       setCurrentProject(data.project);
       addMessage('System', `I'm now focusing on project: ${data.project}`);
-    });
-
-    socket.on('printer_list', (list) => {
-      console.log('[PRINTERS] Count:', list.length);
-      setPrinterCount(list.length);
-    });
-
-    socket.on('slicing_progress', (data) => {
-      console.log('[SLICING] Progress:', data);
-      setSlicingStatus({
-        active: data.percent < 100,
-        percent: data.percent,
-        message: data.message
-      });
-    });
-
-    socket.on('print_status_update', (data) => {
-      console.log('[PRINT STATUS]', data);
-      if (data.state && data.state.toLowerCase().includes('print')) {
-        setActivePrintStatus({
-          printer: data.printer,
-          progress_percent: data.progress_percent,
-          time_elapsed: data.time_elapsed,
-          state: data.state
-        });
-      } else if (data.state && (data.state.toLowerCase() === 'idle' || data.state.toLowerCase() === 'standby' || data.state.toLowerCase() === 'complete')) {
-        setActivePrintStatus(null);
-      }
     });
 
     navigator.mediaDevices.enumerateDevices().then(devs => {
@@ -733,9 +714,6 @@ function App() {
       socket.off('kasa_devices');
       socket.off('kasa_update');
       socket.off('vn_scene');
-      socket.off('printer_list');
-      socket.off('slicing_progress');
-      socket.off('print_status_update');
       socket.off('error');
 
       stopMicVisualizer();
@@ -1040,7 +1018,7 @@ function App() {
 
         if (isFist) {
           if (!activeDragElementRef.current) {
-            const draggableElements = ['browser', 'kasa', 'printer'];
+            const draggableElements = ['browser', 'kasa', 'reminders', 'notes', 'calendar'];
 
             for (const id of draggableElements) {
               const el = document.getElementById(id);
@@ -1135,11 +1113,11 @@ function App() {
 
   const toggleScreenCapture = () => {
     if (visionMode === 'screen') {
-      const next = isVideoOnRef.current ? 'camera' : 'none';
-      setVisionModeAndPersist(next, { screen_capture: { stream_to_ai: false } });
-      return;
+      setVisionModeAndPersist('none', { screen_capture: { stream_to_ai: false } });
+    } else {
+      if (isVideoOn) stopVideo();
+      setVisionModeAndPersist('screen', { screen_capture: { stream_to_ai: true } });
     }
-    setVisionModeAndPersist('screen', { screen_capture: { stream_to_ai: true } });
   };
 
   const addMessage = (sender, text) => {
@@ -1267,24 +1245,22 @@ const handleSend = (e) => {
   const updateElementPosition = (id, dx, dy) => {
     setElementPositions(prev => {
       const currentPos = prev[id];
+      if (!currentPos) {
+        console.error(`[Drag] Hand tracking cannot update position for unknown element ID: ${id}`);
+        return prev; // Do not update if the element position is not found
+      }
       const size = elementSizes[id] || { w: 100, h: 100 };
-      let newX = currentPos.x + dx;
-      let newY = currentPos.y + dy;
+      const rawNewX = currentPos.x + dx;
+      const rawNewY = currentPos.y + dy;
 
       const width = window.innerWidth;
       const height = window.innerHeight;
       const margin = 0;
+      const topBarHeight = 60;
 
-      if (id === 'chat') {
-        newX = Math.max(size.w / 2 + margin, Math.min(width - size.w / 2 - margin, newX));
-        newY = Math.max(margin, Math.min(height - size.h - margin, newY));
-      } else if (id === 'video') {
-        newX = Math.max(margin, Math.min(width - size.w - margin, newX));
-        newY = Math.max(margin, Math.min(height - size.h - margin, newY));
-      } else {
-        newX = Math.max(size.w / 2 + margin, Math.min(width - size.w / 2 - margin, newX));
-        newY = Math.max(size.h / 2 + margin, Math.min(height - size.h / 2 - margin, newY));
-      }
+      // This logic should be identical to handleMouseDrag
+      const newX = Math.max(size.w / 2 + margin, Math.min(width - size.w / 2 - margin, rawNewX));
+      const newY = Math.max(size.h / 2 + margin + topBarHeight, Math.min(height - size.h / 2 - margin, rawNewY));
 
       return { ...prev, [id]: { x: newX, y: newY } };
     });
@@ -1341,23 +1317,16 @@ const handleSend = (e) => {
 
     setElementPositions(prev => {
       const size = elementSizes[id] || { w: 100, h: 100 };
-      let newX = rawNewX;
-      let newY = rawNewY;
 
       const width = window.innerWidth;
       const height = window.innerHeight;
       const margin = 0;
+      const topBarHeight = 60; // Approximate height of the top bar
 
-      if (id === 'chat') {
-        newX = Math.max(size.w / 2 + margin, Math.min(width - size.w / 2 - margin, newX));
-        newY = Math.max(margin, Math.min(height - size.h - margin, newY));
-      } else if (id === 'video') {
-        newX = Math.max(margin, Math.min(width - size.w - margin, newX));
-        newY = Math.max(margin, Math.min(height - size.h - margin, newY));
-      } else {
-        newX = Math.max(size.w / 2 + margin, Math.min(width - size.w / 2 - margin, newX));
-        newY = Math.max(size.h / 2 + margin, Math.min(height - size.h / 2 - margin, newY));
-      }
+      // All draggable windows use center-based positioning with translate(-50%, -50%)
+      // We clamp the center position to keep the window within the viewport.
+      const newX = Math.max(size.w / 2 + margin, Math.min(width - size.w / 2 - margin, rawNewX));
+      const newY = Math.max(size.h / 2 + margin + topBarHeight, Math.min(height - size.h / 2 - margin, rawNewY));
 
       return { ...prev, [id]: { x: newX, y: newY } };
     });
@@ -1371,14 +1340,20 @@ const handleSend = (e) => {
     window.removeEventListener('mouseup', handleMouseUp);
   };
 
-  const toggleKasaWindow = () => {
-    setShowKasaWindow(!showKasaWindow);
+  const handleToggleWindow = (windowId, isVisible, setVisibility) => {
+    if (!isVisible) {
+      // Reset position when opening the window
+      bringToFront(windowId);
+      const defaultPositions = getDefaultPositions();
+      if (defaultPositions[windowId]) {
+        setElementPositions(prev => ({
+          ...prev,
+          [windowId]: defaultPositions[windowId]
+        }));
+      }
+    }
+    setVisibility(!isVisible);
   };
-
-  const togglePrinterWindow = () => {
-    setShowPrinterWindow(!showPrinterWindow);
-  };
-
   return (
     <div className="h-screen w-screen bg-black text-white/85 font-sans overflow-hidden flex flex-col relative selection:bg-white/10 selection:text-white">
       {isLockScreenVisible && (
@@ -1437,13 +1412,9 @@ const handleSend = (e) => {
         style={{ WebkitAppRegion: 'drag' }}
       >
         <div className="flex items-center gap-4 pl-2">
-          <h1 className="text-xl font-semibold tracking-[0.2em] text-white/90 drop-shadow-[0_0_10px_rgba(255,255,255,0.18)]">
+          <h1 className="text-xl font-semibold tracking-[0.1em] text-white/70 drop-shadow-[0_0_10px_rgba(255,255,255,0.18)]">
             Monik.AI
           </h1>
-
-          <div className="text-[10px] text-white/55 border border-white/12 bg-white/5 px-1.5 py-0.5 rounded">
-            Inteligetna Asystentka
-          </div>
 
           {isVideoOn && (
             <div className="text-[10px] text-white/70 border border-white/12 bg-white/5 px-1.5 py-0.5 rounded ml-2">
@@ -1554,7 +1525,7 @@ const handleSend = (e) => {
             <div
               id="video"
               className={`transition-all duration-200 
-                ${isVideoOn ? 'opacity-100' : 'opacity-0 pointer-events-none'} 
+                ${isVideoOn ? 'opacity-100' : 'opacity-0 pointer-events-none hidden'} 
                 backdrop-blur-md bg-white/[0.06] border border-white/[0.14] shadow-xl rounded-xl
               `}
             >
@@ -1661,17 +1632,18 @@ const handleSend = (e) => {
             onToggleVideo={toggleVideo}
             onToggleScreenCapture={toggleScreenCapture}
             onToggleSettings={() => setShowSettings(!showSettings)}
-            onToggleReminders={() => setShowRemindersWindow(!showRemindersWindow)}
+            onToggleReminders={() => handleToggleWindow('reminders', showRemindersWindow, setShowRemindersWindow)}
             showRemindersWindow={showRemindersWindow}
-            onToggleNotes={() => setShowNotesWindow(!showNotesWindow)}
+            onToggleNotes={() => handleToggleWindow('notes', showNotesWindow, setShowNotesWindow)}
             showNotesWindow={showNotesWindow}
             onToggleHand={() => setIsHandTrackingEnabled(!isHandTrackingEnabled)}
-            onToggleKasa={toggleKasaWindow}
+            onToggleKasa={() => handleToggleWindow('kasa', showKasaWindow, setShowKasaWindow)}
             showKasaWindow={showKasaWindow}
-            onTogglePrinter={togglePrinterWindow}
-            showPrinterWindow={showPrinterWindow}
-            onToggleBrowser={() => setShowBrowserWindow(!showBrowserWindow)}
+            onToggleBrowser={() => handleToggleWindow('browser', showBrowserWindow, setShowBrowserWindow)}
             showBrowserWindow={showBrowserWindow}
+            onToggleCalendar={() => handleToggleWindow('calendar', showCalendarWindow, setShowCalendarWindow)}
+            showCalendarWindow={showCalendarWindow}
+            onResetPosition={handleResetPosition}
             activeDragElement={activeDragElement}
             position={elementPositions.tools}
             onMouseDown={(e) => handleMouseDown(e, 'tools')}
@@ -1680,29 +1652,32 @@ const handleSend = (e) => {
 
         {/* Kasa Window */}
         {showKasaWindow && (
-          <KasaWindow
-            socket={socket}
-            position={elementPositions.kasa}
-            activeDragElement={activeDragElement}
-            setActiveDragElement={setActiveDragElement}
-            devices={kasaDevices}
-            onClose={() => setShowKasaWindow(false)}
+          <div
+            id="kasa"
+            className={`absolute flex flex-col transition-[box-shadow,background-color,border-color] duration-200
+              backdrop-blur-xl bg-white/[0.06] border border-white/[0.14] shadow-2xl overflow-hidden rounded-lg
+              ${activeDragElement === 'kasa' ? 'ring-2 ring-white/30 bg-white/[0.08]' : ''}
+            `}
+            style={{
+              left: elementPositions.kasa?.x,
+              top: elementPositions.kasa?.y,
+              transform: 'translate(-50%, -50%)',
+              width: `${elementSizes.kasa.w}px`,
+              height: `${elementSizes.kasa.h}px`,
+              pointerEvents: 'auto',
+              zIndex: getZIndex('kasa')
+            }}
             onMouseDown={(e) => handleMouseDown(e, 'kasa')}
-            zIndex={getZIndex('kasa')}
-          />
-        )}
-
-        {/* Printer Window */}
-        {showPrinterWindow && (
-          <PrinterWindow
-            socket={socket}
-            onClose={() => setShowPrinterWindow(false)}
-            position={elementPositions.printer}
-            onMouseDown={(e) => handleMouseDown(e, 'printer')}
-            activeDragElement={activeDragElement}
-            setActiveDragElement={setActiveDragElement}
-            zIndex={getZIndex('printer')}
-          />
+          >
+            <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay z-10" />
+            <div className="relative z-20 w-full h-full">
+              <KasaWindow
+                socket={socket}
+                devices={kasaDevices}
+                onClose={() => setShowKasaWindow(false)}
+              />
+            </div>
+          </div>
         )}
 
         {/* Reminders Window */}
@@ -1712,18 +1687,50 @@ const handleSend = (e) => {
             onClose={() => setShowRemindersWindow(false)}
             position={elementPositions.reminders}
             onMouseDown={(e) => handleMouseDown(e, 'reminders')}
+            activeDragElement={activeDragElement}
             zIndex={getZIndex('reminders')}
           />
         )}
 
         {/* Notes Window */}
         {showNotesWindow && (
-          <NotesWindow
-            socket={socket}
-            onClose={() => setShowNotesWindow(false)}
-            position={elementPositions.notes}
+          <div
+            id="notes"
+            className={`absolute flex flex-col transition-[box-shadow,background-color,border-color] duration-200
+              backdrop-blur-xl bg-white/[0.06] border border-white/[0.14] shadow-2xl overflow-hidden rounded-lg
+              ${activeDragElement === 'notes' ? 'ring-2 ring-white/30 bg-white/[0.08]' : ''}
+            `}
+            style={{
+              left: elementPositions.notes?.x,
+              top: elementPositions.notes?.y,
+              transform: 'translate(-50%, -50%)',
+              width: `${elementSizes.notes.w}px`,
+              height: `${elementSizes.notes.h}px`,
+              pointerEvents: 'auto',
+              zIndex: getZIndex('notes')
+            }}
             onMouseDown={(e) => handleMouseDown(e, 'notes')}
-            zIndex={getZIndex('notes')}
+          >
+            <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay z-10" />
+            <div className="relative z-20 w-full h-full">
+              <NotesWindow
+                socket={socket}
+                onClose={() => setShowNotesWindow(false)}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Calendar Window */}
+        {showCalendarWindow && (
+          <CalendarWindow
+            socket={socket}
+            isVisible={showCalendarWindow}
+            onClose={() => setShowCalendarWindow(false)}
+            position={elementPositions.calendar}
+            onMouseDown={(e) => handleMouseDown(e, 'calendar')}
+            activeDragElement={activeDragElement}
+            zIndex={getZIndex('calendar')}
           />
         )}
 

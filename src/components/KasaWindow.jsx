@@ -3,13 +3,8 @@ import { X, RefreshCw, Power, Sun, Palette } from 'lucide-react';
 
 const KasaWindow = ({
     socket,
-    position,
     onClose,
-    activeDragElement,
-    setActiveDragElement,
     devices,
-    onMouseDown,
-    zIndex = 40
 }) => {
     const [isThinking, setIsThinking] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
@@ -191,23 +186,9 @@ const KasaWindow = ({
     // Color logic can be added later, keeping it simple for now as requested (Off, On, Settings)
 
     return (
-        <div
-            id="kasa"
-            onMouseDown={onMouseDown}
-            className={`absolute flex flex-col gap-2 p-4 rounded-xl backdrop-blur-md bg-black/60 border border-cyan-500/30 transition-all duration-200 select-none
-                ${activeDragElement === 'kasa' ? 'ring-2 ring-green-500 shadow-[0_0_30px_rgba(34,197,94,0.3)]' : 'shadow-[0_0_20px_rgba(6,182,212,0.1)]'}
-            `}
-            style={{
-                left: position.x,
-                top: position.y,
-                width: '320px',
-                minHeight: '200px',
-                transform: 'translate(-50%, -50%)',
-                zIndex: zIndex
-            }}
-        >
+        <div className="w-full h-full flex flex-col p-4">
             {/* Header */}
-            <div data-drag-handle className="flex items-center justify-between pb-2 border-b border-white/10 mb-2 cursor-grab active:cursor-grabbing">
+            <div data-drag-handle className="flex items-center justify-between pb-2 border-b border-white/10 mb-2 cursor-grab active:cursor-grabbing select-none">
                 <div className="flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${devices.length > 0 ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
                     <h3 className="font-bold text-cyan-400 tracking-wider text-sm">SMART CONTROL</h3>
@@ -232,7 +213,7 @@ const KasaWindow = ({
             </div>
 
             {/* Content */}
-            <div className="flex-1 overflow-y-auto max-h-[400px] scrollbar-hide">
+            <div className="flex-1 overflow-y-auto scrollbar-hide select-text">
 
                 {devices.length === 0 && isLoading && !isThinking && (
                     <div className="flex flex-col items-center justify-center p-8 gap-3">
@@ -261,7 +242,7 @@ const KasaWindow = ({
                 )}
 
                 {devices.map((dev) => (
-                    <div key={dev.ip} className="mb-3 p-3 bg-white/5 rounded-lg border border-white/10 hover:border-cyan-500/30 transition-all">
+                    <div key={dev.ip} className="mb-3 p-3 bg-white/5 rounded-lg border border-white/10 hover:border-cyan-500/30 transition-all select-none">
                         <div className="flex items-center justify-between mb-2">
                             <div className="flex flex-col">
                                 <span className="font-bold text-sm text-white">{dev.alias}</span>
@@ -331,19 +312,20 @@ const KasaWindow = ({
                         )}
                     </div>
                 ))}
+
+                {/* Bottom Discover (if devices exist) */}
+                {devices.length > 0 && (
+                    <div className="pt-2 border-t border-white/10 mt-2 flex justify-end">
+                        <button
+                            onClick={handleDiscover}
+                            className="p-1 text-white/30 hover:text-cyan-400 transition-colors"
+                            title="Rescan"
+                        >
+                            <RefreshCw size={14} />
+                        </button>
+                    </div>
+                )}
             </div>
-            {/* Bottom Discover (if devices exist) */}
-            {devices.length > 0 && (
-                <div className="pt-2 border-t border-white/10 mt-2 flex justify-end">
-                    <button
-                        onClick={handleDiscover}
-                        className="p-1 text-white/30 hover:text-cyan-400 transition-colors"
-                        title="Rescan"
-                    >
-                        <RefreshCw size={14} />
-                    </button>
-                </div>
-            )}
         </div>
     );
 };

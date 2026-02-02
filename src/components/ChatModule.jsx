@@ -386,11 +386,11 @@ const ChatModule = ({
                   ? "bg-white/[0.10] hover:bg-white/[0.14] text-white/85"
                   : "bg-white/[0.04] hover:bg-white/[0.08] text-white/70",
               ].join(" ")}
-              title={historyExpanded ? "Zwiń historię (Esc)" : "Rozwiń historię"}
+              title={historyExpanded ? "Zwiń historię" : "Rozwiń historię"}
             >
               <span className="inline-flex items-center gap-2">
                 {historyExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                History
+                Historia
               </span>
             </button>
           </div>
@@ -486,7 +486,7 @@ const ChatModule = ({
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="Napisz wiadomość… (Enter = wyślij, Shift+Enter = nowa linia)"
+              placeholder="Napisz do mnie…"
               rows={2}
               className={[
                 "w-full resize-none",
@@ -540,7 +540,7 @@ const ChatModule = ({
 
             <div className="mt-2 flex items-center justify-between gap-3">
               <div className="text-[11px] text-white/35">
-                Enter: wyślij · Shift+Enter: nowa linia
+                Shift+Enter: Nowa linia
                 {attachments.length ? (
                   <span className="ml-2 text-white/25">
                     · Załączniki: {attachments.length}/{MAX_FILES} · {Math.round(totalAttachBytes / 1024)} KB

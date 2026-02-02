@@ -10,6 +10,7 @@ import socketio
 import uvicorn
 from fastapi import FastAPI
 import asyncio
+from contextlib import asynccontextmanager
 import threading
 import sys
 import os
@@ -27,9 +28,27 @@ import monikai
 from authenticator import FaceAuthenticator
 from kasa_agent import KasaAgent
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Code to run on startup
+    print(f"[SERVER DEBUG] Startup Event Triggered")
+    print(f"[SERVER DEBUG] Python Version: {sys.version}")
+    try:
+        loop = asyncio.get_running_loop()
+        print(f"[SERVER DEBUG] Running Loop: {type(loop)}")
+        policy = asyncio.get_event_loop_policy()
+        print(f"[SERVER DEBUG] Current Policy: {type(policy)}")
+    except Exception as e:
+        print(f"[SERVER DEBUG] Error checking loop: {e}")
+
+    print("[SERVER] Startup: Initializing Kasa Agent...")
+    await kasa_agent.initialize()
+    yield
+
 # Create a Socket.IO server
 sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 app_socketio = socketio.ASGIApp(sio, app)
 
 import signal
@@ -57,6 +76,7 @@ loop_task = None
 authenticator = None
 kasa_agent = KasaAgent()
 SETTINGS_FILE = "settings.json"
+last_start_params = {}
 
 DEFAULT_SETTINGS = {
     "face_auth_enabled": False, # Default OFF as requested
@@ -135,22 +155,6 @@ authenticator = None
 kasa_agent = KasaAgent(known_devices=SETTINGS.get("kasa_devices"))
 # tool_permissions is now SETTINGS["tool_permissions"]
 
-@app.on_event("startup")
-async def startup_event():
-    import sys
-    print(f"[SERVER DEBUG] Startup Event Triggered")
-    print(f"[SERVER DEBUG] Python Version: {sys.version}")
-    try:
-        loop = asyncio.get_running_loop()
-        print(f"[SERVER DEBUG] Running Loop: {type(loop)}")
-        policy = asyncio.get_event_loop_policy()
-        print(f"[SERVER DEBUG] Current Policy: {type(policy)}")
-    except Exception as e:
-        print(f"[SERVER DEBUG] Error checking loop: {e}")
-
-    print("[SERVER] Startup: Initializing Kasa Agent...")
-    await kasa_agent.initialize()
-
 @app.get("/status")
 async def status():
     return {"status": "running", "service": "MonikAI Backend"}
@@ -201,7 +205,10 @@ async def disconnect(sid):
 
 @sio.event
 async def start_audio(sid, data=None):
-    global audio_loop, loop_task
+    global audio_loop, loop_task, last_start_params
+    
+    # Save params for auto-restart
+    last_start_params = {'sid': sid, 'data': data}
     
     # Optional: Block if not authenticated
     # Only block if auth is ENABLED and not authenticated
@@ -315,6 +322,14 @@ async def start_audio(sid, data=None):
         except Exception as e:
             print(f"[SERVER] Failed to emit reminder_fired: {e}")
 
+    # Callback for Calendar data
+    def on_calendar_update(events):
+        try:
+            print(f"[SERVER] Emitting calendar_data with {len(events)} events.")
+            asyncio.create_task(sio.emit('calendar_data', events))
+        except Exception as e:
+            print(f"[SERVER] Failed to emit calendar_data: {e}")
+
     def on_reminders_updated():
         try:
             asyncio.create_task(sio.emit('reminders_list', {'reminders': _serialize_reminders()}))
@@ -343,6 +358,7 @@ async def start_audio(sid, data=None):
             on_error=on_error,
             on_reminder_fired=on_reminder_fired,
             on_reminders_updated=on_reminders_updated,
+            on_calendar_update=on_calendar_update,
 
             input_device_index=device_index,
             input_device_name=device_name,
@@ -373,8 +389,17 @@ async def start_audio(sid, data=None):
             except asyncio.CancelledError:
                 print("[SYSTEM NOTIFICATION] Audio Loop Cancelled")
             except Exception as e:
-                print(f"[SYSTEM ERROR] Audio Loop Crashed: {e}")
-                # You could emit 'error' here if you have context
+                print(f"[SYSTEM ERROR] Audio Loop Crashed: {e}. Attempting restart...")
+                asyncio.create_task(sio.emit('status', {'msg': 'Connection lost. Reconnecting...'}))
+                
+                async def restart_session():
+                    await asyncio.sleep(2)
+                    # Use global params to ensure we have the latest valid config
+                    if last_start_params.get('sid'):
+                        print("[SERVER] Triggering auto-restart...")
+                        await start_audio(last_start_params['sid'], last_start_params.get('data'))
+                
+                asyncio.create_task(restart_session())
         
         loop_task.add_done_callback(handle_loop_exit)
         
@@ -577,6 +602,23 @@ async def list_reminders(sid, data=None):
     """Frontend requests current reminder list."""
     await sio.emit('reminders_list', {'reminders': _serialize_reminders()}, room=sid)
 
+
+@sio.event
+async def list_calendar(sid, data=None):
+    """Frontend requests current calendar events."""
+    events = []
+    if audio_loop and getattr(audio_loop, 'calendar_manager', None):
+        events = [e.__dict__ for e in audio_loop.calendar_manager.events.values()]
+    await sio.emit('calendar_data', events, room=sid)
+
+@sio.event
+async def delete_calendar_event(sid, data):
+    """Frontend deletes a calendar event."""
+    eid = (data or {}).get('id')
+    if not eid:
+        return
+    if audio_loop and getattr(audio_loop, 'calendar_manager', None):
+        audio_loop.calendar_manager.delete_event(eid)
 
 @sio.event
 async def cancel_reminder(sid, data):

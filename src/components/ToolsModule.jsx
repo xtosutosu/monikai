@@ -1,5 +1,5 @@
 import React from 'react';
-import { Mic, MicOff, Settings, Clock, Power, Video, VideoOff, Hand, Lightbulb, Printer, Globe, Box, Monitor, FileText } from 'lucide-react';
+import { Mic, MicOff, Settings, Clock, Power, Video, VideoOff, Hand, Lightbulb, Globe, Monitor, FileText, CalendarDays } from 'lucide-react';
 
 const ToolsModule = ({
     isConnected,
@@ -20,10 +20,11 @@ const ToolsModule = ({
     onToggleHand,
     onToggleKasa,
     showKasaWindow,
-    onTogglePrinter,
-    showPrinterWindow,
     onToggleBrowser,
     showBrowserWindow,
+    onToggleCalendar,
+    showCalendarWindow,
+    onResetPosition,
     activeDragElement,
 
     position,
@@ -94,34 +95,6 @@ const ToolsModule = ({
                     <Monitor size={24} />
                 </button>
 
-                {/* Settings Button */}
-                <button
-                    onClick={onToggleSettings}
-                    className={`p-3 rounded-full border-2 transition-all ${showSettings ? 'border-cyan-400 text-cyan-400 bg-cyan-900/20' : 'border-cyan-900 text-cyan-700 hover:border-cyan-500 hover:text-cyan-500'
-                        } `}
-                >
-                    <Settings size={24} />
-                </button>
-
-                {/* Reminders Button */}
-                <button
-                    onClick={onToggleReminders}
-                    className={`p-3 rounded-full border-2 transition-all ${showRemindersWindow ? 'border-cyan-400 text-cyan-400 bg-cyan-900/20' : 'border-cyan-900 text-cyan-700 hover:border-cyan-500 hover:text-cyan-500'
-                        } `}
-                >
-                    <Clock size={24} />
-                </button>
-
-                {/* Notes Button */}
-                <button
-                    onClick={onToggleNotes}
-                    className={`p-3 rounded-full border-2 transition-all ${showNotesWindow ? 'border-teal-400 text-teal-400 bg-teal-900/20' : 'border-cyan-900 text-cyan-700 hover:border-teal-500 hover:text-teal-500'
-                        } `}
-                    title="Notatki"
-                >
-                    <FileText size={24} />
-                </button>
-
                 {/* Hand Tracking Toggle */}
                 <button
                     onClick={onToggleHand}
@@ -133,9 +106,44 @@ const ToolsModule = ({
                     <Hand size={24} />
                 </button>
 
+                {/* Web Agent Toggle */}
+                <button
+                    onClick={onToggleBrowser}
+                    onContextMenu={(e) => { e.preventDefault(); onResetPosition('browser'); }}
+                    className={`p-3 rounded-full border-2 transition-all duration-300 ${showBrowserWindow
+                        ? 'border-blue-400 bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 shadow-[0_0_15px_rgba(96,165,250,0.3)]'
+                        : 'border-cyan-900 text-cyan-700 hover:border-blue-500 hover:text-blue-500'
+                        } `}
+                >
+                    <Globe size={24} />
+                </button>
+
+                {/* Schedule Button (Combined Reminders & Calendar) */}
+                <button
+                    onClick={onToggleReminders}
+                    onContextMenu={(e) => { e.preventDefault(); onResetPosition('reminders'); }}
+                    className={`p-3 rounded-full border-2 transition-all ${showRemindersWindow ? 'border-cyan-400 text-cyan-400 bg-cyan-900/20' : 'border-cyan-900 text-cyan-700 hover:border-cyan-500 hover:text-cyan-500'
+                        } `}
+                    title="Harmonogram"
+                >
+                    <CalendarDays size={24} />
+                </button>
+
+                {/* Notes Button */}
+                <button
+                    onClick={onToggleNotes}
+                    onContextMenu={(e) => { e.preventDefault(); onResetPosition('notes'); }}
+                    className={`p-3 rounded-full border-2 transition-all ${showNotesWindow ? 'border-teal-400 text-teal-400 bg-teal-900/20' : 'border-cyan-900 text-cyan-700 hover:border-teal-500 hover:text-teal-500'
+                        } `}
+                    title="Notatki"
+                >
+                    <FileText size={24} />
+                </button>
+
                 {/* Kasa Light Control */}
                 <button
                     onClick={onToggleKasa}
+                    onContextMenu={(e) => { e.preventDefault(); onResetPosition('kasa'); }}
                     className={`p-3 rounded-full border-2 transition-all duration-300 ${showKasaWindow
                         ? 'border-yellow-300 bg-yellow-300/10 text-yellow-300 hover:bg-yellow-300/20 shadow-[0_0_15px_rgba(253,224,71,0.3)]'
                         : 'border-cyan-900 text-cyan-700 hover:border-cyan-500 hover:text-cyan-500'
@@ -144,38 +152,15 @@ const ToolsModule = ({
                     <Lightbulb size={24} />
                 </button>
 
-                {/* 3D Printer Control */}
-                {/* <button
-                    onClick={onTogglePrinter}
-                    className={`p-3 rounded-full border-2 transition-all duration-300 ${showPrinterWindow
-                        ? 'border-green-400 bg-green-400/10 text-green-400 hover:bg-green-400/20'
-                        : 'border-cyan-900 text-cyan-700 hover:border-green-500 hover:text-green-500'
-                        } `}
-                >
-                    <Printer size={24} />
-                </button> */}
-
-                {/* CAD Agent Toggle */}
-{/*                 <button
-                    onClick={onToggleCad}
-                    className={`p-3 rounded-full border-2 transition-all duration-300 ${showCadWindow
-                        ? 'border-cyan-400 bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20 shadow-[0_0_15px_rgba(34,211,238,0.3)]'
-                        : 'border-cyan-900 text-cyan-700 hover:border-cyan-500 hover:text-cyan-500'
-                        } `}
-                >
-                    <Box size={24} />
-                </button> */}
-
-                {/* Web Agent Toggle */}
+                {/* Settings Button */}
                 <button
-                    onClick={onToggleBrowser}
-                    className={`p-3 rounded-full border-2 transition-all duration-300 ${showBrowserWindow
-                        ? 'border-blue-400 bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 shadow-[0_0_15px_rgba(96,165,250,0.3)]'
-                        : 'border-cyan-900 text-cyan-700 hover:border-blue-500 hover:text-blue-500'
+                    onClick={onToggleSettings}
+                    className={`p-3 rounded-full border-2 transition-all ${showSettings ? 'border-cyan-400 text-cyan-400 bg-cyan-900/20' : 'border-cyan-900 text-cyan-700 hover:border-cyan-500 hover:text-cyan-500'
                         } `}
                 >
-                    <Globe size={24} />
+                    <Settings size={24} />
                 </button>
+
             </div>
         </div>
     );

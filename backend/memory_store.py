@@ -330,94 +330,87 @@ class MemoryStore:
 # ------------------------------------------------------------------
 # Public API expected by monikai.py (compat wrappers)
 # ------------------------------------------------------------------
-def observe_user_text(self, text: str) -> dict:
-    """Alias for auto_update_from_user_text used by monikai.py."""
-    return self.auto_update_from_user_text(text)
+    def observe_user_text(self, text: str) -> dict:
+        """Alias for auto_update_from_user_text used by monikai.py."""
+        return self.auto_update_from_user_text(text)
 
-def commit_work_to_long_term(self, label: Optional[str] = None) -> str:
-        """
-        Writes:
-        - long_term_memory/profile.md  (CANONICAL: overwritten)
-        - long_term_memory/snapshots/<ts>__<label>.json (history)
-        - long_term_memory/profile_meta.json (hash + last commit)
-        """
-        work = self._load_work()
-        _, _, lt_profile, lt_meta, snapshots_dir, _, _ = self._paths()
+    def commit_work_to_long_term(self, label: Optional[str] = None) -> str:
+            """
+            Writes:
+            - long_term_memory/profile.md  (CANONICAL: overwritten)
+            - long_term_memory/snapshots/<ts>__<label>.json (history)
+            - long_term_memory/profile_meta.json (hash + last commit)
+            """
+            work = self._load_work()
+            _, _, lt_profile, lt_meta, snapshots_dir, _, _ = self._paths()
 
-        safe_label = self._safe_label(label or "snapshot")
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_label = self._safe_label(label or "snapshot")
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        new_hash = self._canonical_hash(work)
+            new_hash = self._canonical_hash(work)
 
-        old_hash = None
-        if lt_meta.exists():
+            old_hash = None
+            if lt_meta.exists():
+                try:
+                    meta = json.loads(lt_meta.read_text(encoding="utf-8"))
+                    if isinstance(meta, dict):
+                        old_hash = meta.get("hash")
+                except Exception:
+                    old_hash = None
+
+            # Skip commit if no changes since last commit
+            if old_hash == new_hash:
+                self._emit({"kind": "commit_skip", "summary": f"Skipped commit (no changes) ({safe_label})"})
+                self._audit({"kind": "commit_skip", "label": safe_label})
+                return f"skipped (no changes) ({safe_label})"
+
+            # Snapshot JSON (history)
+            snap_path = snapshots_dir / f"{ts}__{safe_label}.json"
             try:
-                meta = json.loads(lt_meta.read_text(encoding="utf-8"))
-                if isinstance(meta, dict):
-                    old_hash = meta.get("hash")
-            except Exception:
-                old_hash = None
+                snap_path.write_text(json.dumps(work, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            except Exception as e:
+                raise RuntimeError(f"Failed to write snapshot: {e}") from e
 
-        # Skip commit if no changes since last commit
-        if old_hash == new_hash:
-            self._emit({"kind": "commit_skip", "summary": f"Skipped commit (no changes) ({safe_label})"})
-            self._audit({"kind": "commit_skip", "label": safe_label})
-            return f"skipped (no changes) ({safe_label})"
+            # Canonical long-term markdown
+            md = self._render_work_profile_md(work)
+            # Make the heading match long-term semantics
+            if md.startswith("# Work User Memory (draft)"):
+                md = md.replace("# Work User Memory (draft)", "# Long-Term User Memory", 1)
 
-        # Snapshot JSON (history)
-        snap_path = snapshots_dir / f"{ts}__{safe_label}.json"
-        try:
-            snap_path.write_text(json.dumps(work, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        except Exception as e:
-            raise RuntimeError(f"Failed to write snapshot: {e}") from e
+            try:
+                lt_profile.write_text(md, encoding="utf-8")
+            except Exception as e:
+                raise RuntimeError(f"Failed to write long-term profile: {e}") from e
 
-        # Canonical long-term markdown
-        md = self._render_work_profile_md(work)
-        # Make the heading match long-term semantics
-        if md.startswith("# Work User Memory (draft)"):
-            md = md.replace("# Work User Memory (draft)", "# Long-Term User Memory", 1)
-
-        try:
-            lt_profile.write_text(md, encoding="utf-8")
-        except Exception as e:
-            raise RuntimeError(f"Failed to write long-term profile: {e}") from e
-
-        # Meta
-        try:
-            lt_meta.write_text(
-                json.dumps(
-                    {
-                        "hash": new_hash,
-                        "last_commit_ts": ts,
-                        "label": safe_label,
-                        "snapshot_file": snap_path.name,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
+            # Meta
+            try:
+                lt_meta.write_text(
+                    json.dumps(
+                        {
+                            "hash": new_hash,
+                            "last_commit_ts": ts,
+                            "label": safe_label,
+                            "snapshot_file": snap_path.name,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                    + "\n",
+                    encoding="utf-8",
                 )
-                + "\n",
-                encoding="utf-8",
-            )
-        except Exception:
-            # Meta write failure should not break functionality
-            pass
+            except Exception:
+                # Meta write failure should not break functionality
+                pass
 
-        self._emit({"kind": "commit", "summary": f"Committed WORK -> LONG-TERM ({safe_label})"})
-        self._audit({"kind": "commit", "label": safe_label, "snapshot": snap_path.name})
-        return f"ok ({safe_label})"
+            self._emit({"kind": "commit", "summary": f"Committed WORK -> LONG-TERM ({safe_label})"})
+            self._audit({"kind": "commit", "label": safe_label, "snapshot": snap_path.name})
+            return f"ok ({safe_label})"
 
-    
-def clear_work(self) -> str:
-    """Clear WORK memory (does not delete LONG-TERM snapshots)."""
-    self._save_work({})
-    # Also refresh the markdown view so frontend doesn't show stale text
-    try:
-        self._save_work_markdown(self._render_work_markdown({}))
-    except Exception:
-        pass
-
-    self._emit({"type": "work_cleared"})
-    return "WORK memory cleared."
+    def clear_work(self) -> str:
+        """Clear WORK memory (does not delete LONG-TERM snapshots)."""
+        self._save_work({})
+        self._emit({"type": "work_cleared"})
+        return "WORK memory cleared."
 
 
     def auto_update_from_user_text(self, user_text: str) -> None:
