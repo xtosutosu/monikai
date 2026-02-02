@@ -8,13 +8,14 @@ venv/
 env/
 
 # MonikAI Specific Local Data
-backend/reference.jpg
-backend/settings.json
-backend/user_memory/
-backend/long_term_memory/
 dist/backend/user_memory/
 dist/backend/long_term_memory/
-projects/
+data/long_term_memory
+data/user_memory/
+data/projects
+data/settings.json
+data/personality.json
+data/reference.jpg
 
 # Node.js
 node_modules/
