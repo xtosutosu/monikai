@@ -1,11 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, RefreshCw, Power, Sun, Palette } from 'lucide-react';
+import { X, RefreshCw, Power, Sun, Palette, Lightbulb } from 'lucide-react';
+import { useLanguage } from '../contexts/LanguageContext';
 
-const KasaWindow = ({
-    socket,
-    onClose,
-    devices,
-}) => {
+const KasaWindow = ({ socket, onClose, devices, position, onMouseDown, activeDragElement, zIndex }) => {
+    const { t } = useLanguage();
     const [isThinking, setIsThinking] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [loadingDevices, setLoadingDevices] = useState({}); // { ip: true/false }
@@ -186,12 +184,31 @@ const KasaWindow = ({
     // Color logic can be added later, keeping it simple for now as requested (Off, On, Settings)
 
     return (
-        <div className="w-full h-full flex flex-col p-4">
+        <div
+            id="kasa"
+            className={`absolute flex flex-col transition-[box-shadow,border-color] duration-200
+                backdrop-blur-2xl bg-black/50 border border-white/[0.14] shadow-2xl overflow-hidden rounded-xl
+                ${activeDragElement === 'kasa' ? 'ring-1 ring-white/50 border-white/30' : ''}
+            `}
+            style={{
+                left: position.x,
+                top: position.y,
+                transform: 'translate(-50%, -50%)',
+                width: '340px',
+                height: '500px',
+                pointerEvents: 'auto',
+                zIndex: zIndex
+            }}
+            onMouseDown={onMouseDown}
+        >
             {/* Header */}
-            <div data-drag-handle className="flex items-center justify-between pb-2 border-b border-white/10 mb-2 cursor-grab active:cursor-grabbing select-none">
-                <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${devices.length > 0 ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
-                    <h3 className="font-bold text-cyan-400 tracking-wider text-sm">SMART CONTROL</h3>
+            <div 
+                className="flex items-center justify-between p-4 border-b border-white/10 bg-white/5 shrink-0 cursor-grab active:cursor-grabbing"
+                data-drag-handle
+            >
+                <div className="flex items-center gap-3">
+                    <Lightbulb size={18} className="text-white" />
+                    <span className="text-sm font-medium tracking-wider text-white/90 uppercase">{t('kasa.title')}</span>
                 </div>
                 <div className="flex items-center gap-1">
                     <button
@@ -204,7 +221,7 @@ const KasaWindow = ({
                     </button>
                     <button
                         onClick={onClose}
-                        className="p-1 rounded hover:bg-white/10 transition-colors text-white/50 hover:text-white"
+                        className="p-1.5 hover:bg-red-500/20 hover:text-red-400 rounded-lg text-white/50 transition-colors"
                         title="Close"
                     >
                         <X size={16} />
@@ -213,36 +230,36 @@ const KasaWindow = ({
             </div>
 
             {/* Content */}
-            <div className="flex-1 overflow-y-auto scrollbar-hide select-text">
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
 
                 {devices.length === 0 && isLoading && !isThinking && (
                     <div className="flex flex-col items-center justify-center p-8 gap-3">
-                        <div className="w-5 h-5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-                        <span className="text-xs text-cyan-400/80">Loading devices...</span>
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span className="text-xs text-white/80">{t('kasa.loading')}</span>
                     </div>
                 )}
 
                 {devices.length === 0 && !isThinking && !isLoading && (
                     <div className="flex flex-col items-center justify-center p-8 text-center opacity-50">
-                        <p className="text-xs mb-4">No devices found. Ensure they are on the same network.</p>
+                        <p className="text-xs mb-4">{t('kasa.no_devices')}</p>
                         <button
                             onClick={handleDiscover}
-                            className="flex items-center gap-2 px-4 py-2 bg-cyan-900/30 border border-cyan-500/30 rounded-lg hover:bg-cyan-500/20 hover:border-cyan-500 transition-all text-xs font-mono text-cyan-300"
+                            className="flex items-center gap-2 px-4 py-2 bg-white/10 border border-white/30 rounded-lg hover:bg-white/20 hover:border-white transition-all text-xs font-mono text-white"
                         >
-                            <RefreshCw size={14} /> DISCOVER LIGHTS
+                            <RefreshCw size={14} /> {t('kasa.discover')}
                         </button>
                     </div>
                 )}
 
                 {isThinking && (
                     <div className="flex flex-col items-center justify-center p-8 gap-3">
-                        <div className="w-6 h-6 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-                        <span className="text-xs text-cyan-400 animate-pulse">Scanning Network...</span>
+                        <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span className="text-xs text-white animate-pulse">{t('kasa.scanning')}</span>
                     </div>
                 )}
 
                 {devices.map((dev) => (
-                    <div key={dev.ip} className="mb-3 p-3 bg-white/5 rounded-lg border border-white/10 hover:border-cyan-500/30 transition-all select-none">
+                    <div key={dev.ip} className="p-3 bg-white/5 rounded-lg border border-white/10 hover:border-white/30 transition-all select-none">
                         <div className="flex items-center justify-between mb-2">
                             <div className="flex flex-col">
                                 <span className="font-bold text-sm text-white">{dev.alias}</span>
@@ -282,7 +299,7 @@ const KasaWindow = ({
                                         flushBrightness(dev.ip);
                                     }}
                                     onPointerCancel={() => markDragging(dev.ip, 'brightness', false)}
-                                    className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-cyan-400"
+                                    className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white"
                                 />
                             </div>
                         )}
@@ -315,11 +332,11 @@ const KasaWindow = ({
 
                 {/* Bottom Discover (if devices exist) */}
                 {devices.length > 0 && (
-                    <div className="pt-2 border-t border-white/10 mt-2 flex justify-end">
+                    <div className="pt-2 flex justify-center">
                         <button
                             onClick={handleDiscover}
-                            className="p-1 text-white/30 hover:text-cyan-400 transition-colors"
-                            title="Rescan"
+                            className="p-2 text-white/30 hover:text-white transition-colors"
+                            title={t('kasa.rescan')}
                         >
                             <RefreshCw size={14} />
                         </button>

@@ -29,6 +29,7 @@
     "mute": "Wycisz"
   },
   "chat": {
+    "title": "Rozmowa",
     "history": "Historia",
     "collapse_history": "Zwiń historię",
     "expand_history": "Rozwiń historię",
@@ -60,6 +61,7 @@
     "create": "Utwórz",
     "datetime": "Data/czas",
     "in_minutes": "Za minut",
+    "all_day": "Cały dzień",
     "duration": "Czas trwania",
     "start": "Start",
     "end": "Koniec",
@@ -110,5 +112,47 @@
     "energy": "Energia",
     "cycle": "Cykl biologiczny",
     "day": "Dzień"
+  },
+  "holidays": {
+    "new_year": "🎉 Nowy Rok",
+    "valentines": "💖 Walentynki",
+    "womens_day": "🌹 Dzień Kobiet",
+    "white_day": "🤍 Biały Dzień",
+    "april_fools": "🤡 Prima Aprilis",
+    "earth_day": "🌍 Dzień Ziemi",
+    "labor_day": "🛠️ Święto Pracy",
+    "star_wars": "⭐ Dzień Gwiezdnych Wojen",
+    "environment_day": "🌱 Światowy Dzień Środowiska",
+    "friendship_day": "🤝 Międzynarodowy Dzień Przyjaźni",
+    "youth_day": "🤸 Międzynarodowy Dzień Młodzieży",
+    "programmers_day": "💻 Dzień Programisty",
+    "peace_day": "🕊️ Międzynarodowy Dzień Pokoju",
+    "monika_birthday": "🎂 Moje Urodziny (Monika)",
+    "animal_day": "🐾 Światowy Dzień Zwierząt",
+    "halloween": "🎃 Halloween",
+    "independence_day": "🇵🇱 Święto Niepodległości",
+    "christmas_eve": "🎄 Wigilia",
+    "christmas": "🎁 Boże Narodzenie",
+    "new_years_eve": "🎆 Sylwester"
+  },
+  "notes": {
+    "title": "Notatki",
+    "placeholder": "Będę dla Ciebie tutaj notować ważne rzeczy...",
+    "saved": "Zapisano",
+    "saving": "Zapisywanie..."
+  },
+  "kasa": {
+    "title": "Inteligentny Dom",
+    "loading": "Ładowanie urządzeń...",
+    "no_devices": "Nie znaleziono urządzeń. Upewnij się, że są w tej samej sieci.",
+    "discover": "Szukaj świateł",
+    "scanning": "Skanowanie sieci...",
+    "rescan": "Skanuj ponownie"
+  },
+  "browser": {
+    "title": "Agent Web",
+    "placeholder": "Polecenie dla Agenta...",
+    "send": "Wyślij",
+    "waiting": "Oczekiwanie na strumień..."
   }
 }

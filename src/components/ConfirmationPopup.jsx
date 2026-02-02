@@ -1,54 +1,48 @@
 import React from 'react';
+import { Shield, Check, X, Terminal, AlertTriangle } from 'lucide-react';
 
 const ConfirmationPopup = ({ request, onConfirm, onDeny }) => {
     if (!request) return null;
 
     return (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
-            <div className="relative w-full max-w-lg p-8 bg-black/90 border border-cyan-500/30 rounded-3xl shadow-[0_0_50px_rgba(34,211,238,0.15)] backdrop-blur-2xl transform transition-all scale-100">
-                <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay rounded-3xl"></div>
-
-                {/* Header with Icon */}
-                <div className="flex items-center gap-4 mb-6 relative z-10">
-                    <div className="p-3 rounded-full bg-cyan-900/30 border border-cyan-500/50 text-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.2)]">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-                    </div>
-                    <div>
-                        <h2 className="text-xl font-bold text-cyan-400 tracking-wider font-mono drop-shadow-sm">
-                            MAY I PROCEED?
-                        </h2>
-                        <p className="text-xs text-cyan-600 font-mono tracking-widest uppercase">
-                            Monika's Request
-                        </p>
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="relative w-full max-w-2xl bg-black/60 backdrop-blur-2xl border border-white/10 rounded-xl shadow-2xl overflow-hidden flex flex-col transform transition-all">
+                
+                {/* Header */}
+                <div className="flex items-center justify-between p-4 border-b border-white/10 bg-white/5">
+                    <div className="flex items-center gap-3">
+                        <Shield size={18} className="text-white" />
+                        <span className="text-sm font-medium tracking-wider text-white/90 uppercase">System Request</span>
                     </div>
                 </div>
 
                 {/* Content */}
-                <div className="mb-8 space-y-4 relative z-10">
-                    <p className="text-gray-300 leading-relaxed text-sm">
-                        I'd like to use <span className="text-cyan-300 font-bold">{request.tool}</span>.
-                        <br />
-                        Here are the details of what I'm planning to do. Is that okay with you?
-                    </p>
-
-                    <div className="space-y-2">
-                        <div className="bg-cyan-950/30 border border-cyan-800/50 rounded-xl overflow-hidden">
-                            <div className="bg-cyan-900/40 px-4 py-2 border-b border-cyan-800/50 flex justify-between items-center">
-                                <span className="text-xs text-cyan-400 font-bold uppercase tracking-wider">Function</span>
-                                <span className="text-xs text-white/50 font-mono">system.call</span>
-                            </div>
-                            <div className="p-4">
-                                <div className="text-white font-mono text-lg font-medium">{request.tool}</div>
-                            </div>
+                <div className="p-6 space-y-6">
+                    <div className="flex items-start gap-4">
+                        <div className="p-3 rounded-full bg-white/10 text-white shrink-0 border border-white/20">
+                            <AlertTriangle size={24} />
                         </div>
+                        <div className="space-y-1">
+                            <h3 className="text-white font-medium">Permission Required</h3>
+                            <p className="text-sm text-white/60 leading-relaxed">
+                                Monika is requesting to use an external tool. Please review the details below.
+                            </p>
+                        </div>
+                    </div>
 
-                        <div className="bg-cyan-950/30 border border-cyan-800/50 rounded-xl overflow-hidden">
-                            <div className="bg-cyan-900/40 px-4 py-2 border-b border-cyan-800/50 flex justify-between items-center">
-                                <span className="text-xs text-cyan-400 font-bold uppercase tracking-wider">My Parameters</span>
-                                <span className="text-xs text-white/50 font-mono">json.payload</span>
+                    <div className="bg-black/50 border border-white/10 rounded-lg overflow-hidden">
+                        <div className="px-3 py-2 border-b border-white/5 bg-white/5 flex items-center gap-2">
+                            <Terminal size={12} className="text-white/40" />
+                            <span className="text-[10px] font-mono text-white/60 uppercase tracking-wider">Command Details</span>
+                        </div>
+                        <div className="p-3 space-y-2">
+                            <div className="flex justify-between items-baseline">
+                                <span className="text-xs text-white/40 font-mono">Tool:</span>
+                                <span className="text-xs text-white font-mono font-bold">{request.tool}</span>
                             </div>
-                            <div className="p-4 bg-black/20">
-                                <pre className="text-xs text-gray-300 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed">
+                            <div className="space-y-1">
+                                <span className="text-xs text-white/40 font-mono block">Arguments:</span>
+                                <pre className="text-[10px] text-white/70 font-mono bg-white/5 p-2 rounded border border-white/5 overflow-y-auto max-h-60 custom-scrollbar whitespace-pre-wrap break-words">
                                     {JSON.stringify(request.args, null, 2)}
                                 </pre>
                             </div>
@@ -56,20 +50,21 @@ const ConfirmationPopup = ({ request, onConfirm, onDeny }) => {
                     </div>
                 </div>
 
-                {/* Actions */}
-                <div className="flex gap-4 relative z-10">
+                {/* Footer */}
+                <div className="p-4 border-t border-white/10 bg-white/5 flex gap-3">
                     <button
                         onClick={onDeny}
-                        className="flex-1 px-4 py-3.5 rounded-xl border border-red-500/30 bg-red-950/40 text-red-400 hover:bg-red-900/60 hover:border-red-500 hover:text-red-300 transition-all duration-200 font-bold tracking-wider uppercase text-xs"
+                        className="flex-1 px-4 py-2.5 rounded-lg border border-white/10 hover:bg-white/10 text-white/70 hover:text-white text-xs font-medium tracking-wide transition-colors flex items-center justify-center gap-2"
                     >
-                        No, wait
+                        <X size={14} />
+                        Deny
                     </button>
                     <button
                         onClick={onConfirm}
-                        className="flex-1 px-4 py-3.5 rounded-xl border border-cyan-500/30 bg-cyan-950/40 text-cyan-400 hover:bg-cyan-900/60 hover:border-cyan-400 hover:text-cyan-300 transition-all duration-200 font-bold tracking-wider uppercase text-xs shadow-[0_0_20px_rgba(34,211,238,0.1)] hover:shadow-[0_0_30px_rgba(34,211,238,0.25)] relative overflow-hidden group"
+                        className="flex-1 px-4 py-2.5 rounded-lg bg-white/20 hover:bg-white/30 text-white text-xs font-medium tracking-wide transition-colors flex items-center justify-center gap-2 shadow-lg shadow-white/10"
                     >
-                        <span className="relative z-10">Yes, go ahead</span>
-                        <div className="absolute inset-0 bg-cyan-400/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
+                        <Check size={14} />
+                        Allow
                     </button>
                 </div>
             </div>

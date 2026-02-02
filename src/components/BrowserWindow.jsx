@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { Globe, X } from "lucide-react";
+import { Globe, X, Send, Terminal } from "lucide-react";
+import { useLanguage } from '../contexts/LanguageContext';
 
-const BrowserWindow = ({ imageSrc, logs = [], onClose, socket }) => {
+const BrowserWindow = ({ imageSrc, logs = [], onClose, socket, position, onMouseDown, activeDragElement, zIndex }) => {
+  const { t } = useLanguage();
   const [input, setInput] = useState("");
   const logsBoxRef = useRef(null);
   const logsEndRef = useRef(null);
@@ -78,31 +80,42 @@ const BrowserWindow = ({ imageSrc, logs = [], onClose, socket }) => {
   }, [imageSrc]);
 
   return (
-    <div className="w-full h-full relative overflow-hidden flex flex-col rounded-2xl border border-white/12 bg-black/50 backdrop-blur-xl shadow-[0_20px_80px_rgba(0,0,0,0.55)]">
-      {/* subtle noise (spójnie z resztą UI) */}
-      <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.06] pointer-events-none mix-blend-overlay" />
-
-      {/* Header Bar - Drag Handle */}
-      <div
+    <div
+      id="browser"
+      className={`absolute flex flex-col transition-[box-shadow,border-color] duration-200
+        backdrop-blur-2xl bg-black/50 border border-white/[0.14] shadow-2xl overflow-hidden rounded-xl
+        ${activeDragElement === 'browser' ? 'ring-1 ring-white/50 border-white/30' : ''}
+      `}
+      style={{
+        left: position?.x,
+        top: position?.y,
+        transform: 'translate(-50%, -50%)',
+        width: '600px',
+        height: '450px',
+        pointerEvents: 'auto',
+        zIndex: zIndex
+      }}
+      onMouseDown={onMouseDown}
+    >
+      {/* Header */}
+      <div 
+        className="flex items-center justify-between p-4 border-b border-white/10 bg-white/5 shrink-0 cursor-grab active:cursor-grabbing"
         data-drag-handle
-        className="relative z-10 h-9 border-b border-white/10 bg-black/35 flex items-center justify-between px-3 shrink-0 cursor-grab active:cursor-grabbing select-none"
       >
-        <div className="flex items-center gap-2 text-white/70 text-xs font-mono tracking-wider">
-          <Globe size={14} className="text-white/60" />
-          <span>WEB_AGENT_VIEW</span>
+        <div className="flex items-center gap-3">
+          <Globe size={18} className="text-white" />
+          <span className="text-sm font-medium tracking-wider text-white/90 uppercase">{t('browser.title')}</span>
         </div>
-
         <button
           onClick={onClose}
-          className="p-1 rounded-lg hover:bg-white/10 text-white/60 hover:text-white/85 transition-colors"
-          title="Zamknij"
+          className="p-1.5 hover:bg-red-500/20 hover:text-red-400 rounded-lg text-white/50 transition-colors"
         >
           <X size={14} />
         </button>
       </div>
 
       {/* Browser Content */}
-      <div className="relative z-10 flex-1 bg-black flex items-center justify-center overflow-hidden">
+      <div className="relative flex-1 bg-black/50 flex items-center justify-center overflow-hidden group">
         {imgSrc ? (
           <img
             src={imgSrc}
@@ -114,60 +127,52 @@ const BrowserWindow = ({ imageSrc, logs = [], onClose, socket }) => {
         ) : (
           <div className="flex flex-col items-center gap-2">
             <div className="text-white/35 text-xs font-mono animate-pulse">
-              Waiting for browser stream...
+              {t('browser.waiting')}
             </div>
           </div>
         )}
+
+        {/* Logs Overlay (Bottom of image area) */}
+        <div
+          ref={logsBoxRef}
+          className="absolute bottom-0 left-0 right-0 h-32 bg-black/80 backdrop-blur-sm border-t border-white/10 px-3 py-2 font-mono text-[10px] overflow-y-auto text-white/70 transition-transform translate-y-full group-hover:translate-y-0 duration-300"
+        >
+          <div className="flex items-center gap-2 mb-2 text-white/30 uppercase tracking-wider text-[9px] sticky top-0 bg-black/80 pb-1 border-b border-white/5">
+            <Terminal size={10} /> Agent Logs
+          </div>
+          {decoratedLogs.map((log) => (
+            <div key={log.id} className="mb-1 last:mb-0 break-words">
+              <span className="text-white/50 mr-2">{">"}</span>
+              {log.text}
+            </div>
+          ))}
+          <div ref={logsEndRef} />
+        </div>
       </div>
 
       {/* Input Bar */}
-      <div className="relative z-10 border-t border-white/10 bg-black/35 px-3 py-2 flex items-center gap-2">
-        <span className="text-white/55 font-mono text-xs select-none">{">"}</span>
-
+      <div className="p-3 border-t border-white/10 bg-white/5 flex items-center gap-2 shrink-0">
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="Command for Web Agent…"
-          className="flex-1 bg-transparent border-none outline-none text-white/80 text-sm font-mono placeholder:text-white/30"
+          placeholder={t('browser.placeholder')}
+          className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/50 font-mono"
         />
 
         <button
           onClick={handleSend}
           disabled={!canSend}
           className={[
-            "px-3 py-1.5 rounded-xl text-xs font-semibold tracking-wider",
-            "border transition-colors select-none",
+            "p-2 rounded-lg border transition-all",
             canSend
-              ? "border-white/18 bg-white/[0.06] hover:bg-white/[0.10] text-white/80"
-              : "border-white/10 bg-white/[0.03] text-white/30 cursor-not-allowed",
+              ? "bg-white/20 border-white/50 text-white hover:bg-white/30"
+              : "bg-white/5 border-white/10 text-white/30 cursor-not-allowed",
           ].join(" ")}
         >
-          SEND
+          <Send size={16} />
         </button>
-      </div>
-
-      {/* Logs Overlay (Bottom) */}
-      <div
-        ref={logsBoxRef}
-        className="relative z-10 h-28 border-t border-white/10 bg-black/60 backdrop-blur px-3 py-2 font-mono text-[11px] overflow-y-auto text-white/70"
-      >
-        {decoratedLogs.map((log) => {
-          const time = new Date(log.ts).toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-          });
-
-          return (
-            <div key={log.id} className="mb-1.5 last:mb-0 border-l-2 border-white/10 pl-2 break-words">
-              <span className="opacity-35 mr-2">[{time}]</span>
-              {log.text}
-            </div>
-          );
-        })}
-        <div ref={logsEndRef} />
       </div>
     </div>
   );

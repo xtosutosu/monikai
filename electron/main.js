@@ -76,18 +76,29 @@ function startPythonBackend() {
         console.log(`Starting Python backend: ${scriptPath}`);
 
         const trySpawn = (command) => {
-            const process = spawn(command, [scriptPath], {
+            const process = spawn(command, ['-u', scriptPath], {
                 cwd: path.join(__dirname, '../backend'),
             });
+
+            let backendStarted = false;
 
             process.stdout.on('data', (data) => {
                 console.log(`[Python]: ${data}`);
                 // Resolve the promise once the backend starts sending data
-                resolve(process);
+                if (!backendStarted) {
+                    backendStarted = true;
+                    resolve(process);
+                }
             });
 
             process.stderr.on('data', (data) => {
-                console.error(`[Python Error]: ${data}`);
+                const msg = data.toString();
+                console.error(`[Python Error]: ${msg}`);
+                // Uvicorn logs to stderr. Resolve if we see the startup message.
+                if (!backendStarted && (msg.includes('Uvicorn running') || msg.includes('Application startup complete'))) {
+                    backendStarted = true;
+                    resolve(process);
+                }
             });
 
             process.on('error', (err) => {
@@ -97,6 +108,12 @@ function startPythonBackend() {
                     trySpawn('python3');
                 } else {
                     reject(new Error('Could not find python or python3. Please make sure Python is installed and in your PATH.'));
+                }
+            });
+
+            process.on('close', (code) => {
+                if (!backendStarted) {
+                    reject(new Error(`Python backend exited prematurely with code ${code}. Check logs for missing dependencies or errors.`));
                 }
             });
         };

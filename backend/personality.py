@@ -16,7 +16,7 @@ class PersonalityState:
     cycle_day: int = 1
     last_update_ts: float = 0.0
     current_cycle_length: int = 28
-    phase: str = "Low Energy, Sensitive"
+    phase: str = "Low Energy, Calm"
     weather: str = "Unknown"
     last_weather_ts: float = 0.0
 
@@ -98,7 +98,7 @@ class PersonalitySystem:
 
     def get_cycle_phase(self) -> str:
         day = self.state.cycle_day
-        if 1 <= day <= 5: return "Low Energy, Sensitive"
+        if 1 <= day <= 5: return "Low Energy, Calm"
         if 6 <= day <= 13: return "Rising Energy, Creative"
         if 14 <= day <= 16: return "Peak Energy, Social, Flirty"
         return "Calm -> Irritable/Tired"

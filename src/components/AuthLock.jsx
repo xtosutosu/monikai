@@ -38,12 +38,12 @@ const AuthLock = ({ socket, onAuthenticated, onAnimationComplete }) => {
         };
     }, [socket, onAuthenticated, onAnimationComplete, isUnlocking]);
 
-    const themeColor = isUnlocking ? 'text-green-500' : 'text-cyan-500';
-    const borderColor = isUnlocking ? 'border-green-500' : 'border-cyan-500';
-    const shadowColor = isUnlocking ? 'shadow-[0_0_50px_rgba(34,197,94,0.4)]' : 'shadow-[0_0_50px_rgba(34,211,238,0.2)]';
+    const themeColor = isUnlocking ? 'text-green-500' : 'text-white';
+    const borderColor = isUnlocking ? 'border-green-500' : 'border-white';
+    const shadowColor = isUnlocking ? 'shadow-[0_0_50px_rgba(34,197,94,0.4)]' : 'shadow-[0_0_50px_rgba(255,255,255,0.2)]';
     const bgGradient = isUnlocking
         ? 'from-green-900/40 via-black to-black'
-        : 'from-cyan-900/20 via-black to-black';
+        : 'from-white/10 via-black to-black';
 
     return (
 
@@ -68,14 +68,14 @@ const AuthLock = ({ socket, onAuthenticated, onAnimationComplete }) => {
                             className={`w-full h-full object-cover transform scale-x-[-1] transition-opacity duration-500 ${isUnlocking ? 'opacity-50 grayscale' : 'opacity-100'}`}
                         />
                     ) : (
-                        <div className={`animate-pulse ${isUnlocking ? 'text-green-800' : 'text-cyan-800'}`}>
+                        <div className={`animate-pulse ${isUnlocking ? 'text-green-800' : 'text-white/50'}`}>
                             <User size={64} />
                         </div>
                     )}
 
                     {/* Scanning Line Animation - remove on unlock */}
                     {!isUnlocking && (
-                        <div className="absolute top-0 left-0 w-full h-1 bg-cyan-400/80 shadow-[0_0_15px_cyan] animate-[scan_2s_ease-in-out_infinite]"></div>
+                        <div className="absolute top-0 left-0 w-full h-1 bg-white/80 shadow-[0_0_15px_white] animate-[scan_2s_ease-in-out_infinite]"></div>
                     )}
 
                     {/* Success Overlay */}
@@ -86,7 +86,7 @@ const AuthLock = ({ socket, onAuthenticated, onAnimationComplete }) => {
                     )}
                 </div>
 
-                <div className={`text-sm tracking-widest ${isUnlocking ? 'text-green-300' : 'text-cyan-300'} animate-pulse transition-colors duration-500`}>
+                <div className={`text-sm tracking-widest ${isUnlocking ? 'text-green-300' : 'text-white/80'} animate-pulse transition-colors duration-500`}>
                     {message}
                 </div>
             </div>

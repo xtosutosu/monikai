@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Paperclip, X, Maximize2, Minimize2, FileText } from "lucide-react";
+import { Paperclip, X, Maximize2, Minimize2, MessageSquare, Send, Brain } from "lucide-react";
 import AudioBar from "./AudioBar";
 import { useLanguage } from '../contexts/LanguageContext';
 
@@ -150,6 +150,7 @@ const ChatModule = ({
   const [attachments, setAttachments] = useState([]); // [{ id, file, previewUrl? }]
   const [attachError, setAttachError] = useState("");
   const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [showThoughts, setShowThoughts] = useState(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -164,27 +165,41 @@ const ChatModule = ({
     return () => window.removeEventListener("keydown", onKey);
   }, [historyExpanded]);
 
+  useEffect(() => {
+    if (!socket) return;
+    const onSettings = (data) => {
+      if (data && typeof data.show_internal_thoughts !== "undefined") {
+        setShowThoughts(data.show_internal_thoughts);
+      }
+    };
+    socket.on("settings", onSettings);
+    socket.emit("get_settings");
+    return () => socket.off("settings", onSettings);
+  }, [socket]);
+
+  const toggleThoughts = () => {
+    if (!socket) return;
+    const next = !showThoughts;
+    setShowThoughts(next);
+    socket.emit("update_settings", { show_internal_thoughts: next });
+  };
+
   const isActive = isModularMode && activeDragElement === "chat";
 
-  // VN layout tuning
-  const PAD_Y = 16;
-  const PAD_X = 18;
-  const NAMEPLATE_H = 30;
-  const INPUT_H = 110; // trochę większe na attachments
-  const GAP = 12;
-
-  const lastSpeaker = useMemo(() => {
-    if (!messages?.length) return "";
-    return String(messages[messages.length - 1]?.sender || "");
-  }, [messages]);
 
   const visibleMessages = useMemo(() => {
-    const list = Array.isArray(messages) ? messages : [];
+    let list = Array.isArray(messages) ? messages : [];
+
+    // Filter out thoughts if the toggle is off
+    if (!showThoughts) {
+      list = list.filter(m => !String(m?.sender || "").includes("(Thought)"));
+    }
+
     if (historyExpanded) {
       return list.slice(Math.max(0, list.length - MAX_RENDER_MESSAGES));
     }
     return list.slice(-18);
-  }, [messages, historyExpanded]);
+  }, [messages, historyExpanded, showThoughts]);
 
   const canSend = Boolean((inputValue || "").trim().length) || attachments.length > 0;
   const canNote = Boolean((inputValue || "").trim().length) && !attachments.length;
@@ -337,171 +352,111 @@ const ChatModule = ({
       id="chat"
       onDrop={onDrop}
       onDragOver={onDragOver}
-      className={[
-        "absolute pointer-events-auto select-none",
-        "transition-all duration-200",
-        "rounded-2xl",
-        "backdrop-blur-xl bg-white/[0.06]",
-        "border border-white/[0.14]",
-        "shadow-[0_20px_80px_rgba(0,0,0,0.45)]",
-        isModularMode ? (isActive ? "ring-2 ring-white/30" : "ring-1 ring-white/10") : "",
-      ].join(" ")}
+      className={`absolute flex flex-col transition-[box-shadow,border-color,height,top] duration-200
+        backdrop-blur-2xl bg-black/50 border border-white/[0.14] shadow-2xl overflow-hidden rounded-xl
+        ${isModularMode && isActive ? 'ring-1 ring-white/50 border-white/30' : ''}
+      `}
       style={{
         left: position?.x ?? window.innerWidth / 2,
         top: effectiveTop,
         transform: "translate(-50%, 0)",
         width,
         height: effectiveHeight,
-        padding: `${PAD_Y}px ${PAD_X}px`,
         zIndex: historyExpanded ? Math.max(zIndex, 90) : zIndex,
       }}
     >
-      <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.06] pointer-events-none mix-blend-overlay rounded-2xl" />
-
-      <div className="relative z-10 h-full w-full flex flex-col">
-        {/* Header: the only draggable area (prevents accidental drag while selecting text) */}
-        <div
-          className="flex items-center justify-between"
-          style={{ height: NAMEPLATE_H }}
-          onMouseDown={onMouseDown}
-        >
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-black/35 border border-white/15">
-            <span className="text-[11px] tracking-[0.22em] uppercase text-white/70">
-              {lastSpeaker || "…"}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="text-[11px] text-white/35">
-              {messages?.length ? `${messages.length} msgs` : "0 msgs"}
-            </div>
-
+      {/* Header */}
+      <div 
+        className="flex items-center justify-between p-4 border-b border-white/10 bg-white/5 shrink-0"
+        onMouseDown={onMouseDown}
+      >
+        <div className="flex items-center gap-3">
+          <MessageSquare size={18} className="text-white" />
+          <span className="text-sm font-medium tracking-wider text-white/90 uppercase">{t('chat.title')}</span>
+        </div>
+        <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleThoughts}
+              className={`p-1.5 rounded-lg transition-colors ${showThoughts ? 'bg-white/20 text-cyan-300' : 'text-white/50 hover:text-white hover:bg-white/10'}`}
+              title={showThoughts ? "Hide Internal Thoughts" : "Show Internal Thoughts"}
+            >
+              <Brain size={16} />
+            </button>
             <button
               type="button"
               onClick={() => setHistoryExpanded((v) => !v)}
-              className={[
-                "px-3 py-1.5 rounded-xl",
-                "border border-white/15",
-                "text-[12px] tracking-[0.18em] uppercase",
-                "transition-all",
-                historyExpanded
-                  ? "bg-white/[0.10] hover:bg-white/[0.14] text-white/85"
-                  : "bg-white/[0.04] hover:bg-white/[0.08] text-white/70",
-              ].join(" ")}
+              className={`p-1.5 rounded-lg transition-colors ${historyExpanded ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white hover:bg-white/10'}`}
               title={historyExpanded ? t('chat.collapse_history') : t('chat.expand_history')}
             >
-              <span className="inline-flex items-center gap-2">
-                {historyExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                {t('chat.history')}
-              </span>
+              {historyExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
             </button>
-          </div>
         </div>
+      </div>
 
-        <div style={{ height: GAP }} />
-
-        <div
-          className={[
-            "relative",
-            "flex-1 min-h-0",
-            "rounded-2xl",
-            "border border-white/[0.14]",
-            "bg-black/35",
-            "backdrop-blur-sm",
-            "overflow-hidden",
-          ].join(" ")}
-        >
-          <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-white/25 to-transparent opacity-70 pointer-events-none" />
-
-          <div
-            className={[
-              "h-full w-full",
-              "overflow-y-auto",
-              "px-4 py-3",
-              "scrollbar-thin scrollbar-thumb-white/15 scrollbar-track-white/5",
-              "hover:scrollbar-thumb-white/25",
-              "select-text",
-            ].join(" ")}
-          >
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4 relative bg-black/20">
             {visibleMessages.map((msg, i) => {
               const sender = String(msg?.sender || "");
               const lower = sender.toLowerCase();
               const isUser = lower === "ty" || lower === "you";
-
-              const age = visibleMessages.length - 1 - i;
-              const opacity = Math.max(0.35, 1 - age * 0.06);
+              const isThought = sender.includes("(Thought)");
 
               return (
-                <div key={i} className="mb-3 last:mb-0" style={{ opacity }}>
+                <div key={i} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
                   <div className="flex items-center gap-2 mb-1">
                     <span
-                      className={[
-                        "inline-flex items-center px-2.5 py-0.5 rounded-lg",
-                        "border text-[11px] tracking-[0.18em] uppercase",
-                        isUser
-                          ? "bg-white/[0.06] border-white/[0.18] text-white/75"
-                          : "bg-white/[0.04] border-white/[0.14] text-white/65",
-                      ].join(" ")}
+                      className={`text-[10px] uppercase tracking-wider font-bold ${
+                        isUser ? 'text-white' : isThought ? 'text-gray-500' : 'text-purple-400'
+                      }`}
                     >
-                      {sender || "…"}
+                      {isThought ? t('chat.monika_thought') : (sender || "…")}
                     </span>
-
                     {msg?.time ? (
-                      <span className="text-[10px] text-white/25 font-mono">{msg.time}</span>
+                      <span className="text-[10px] text-white/30 font-mono">{msg.time}</span>
                     ) : null}
                   </div>
 
-                  <div className="text-[15px] leading-relaxed text-white/88 whitespace-pre-wrap break-words select-text">
+                  <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words border ${
+                    isUser 
+                      ? 'bg-white/10 border-white/20 text-white rounded-tr-sm' 
+                      : isThought
+                        ? 'bg-white/[0.02] border-white/5 text-white/50 italic rounded-tl-sm border-dashed'
+                        : 'bg-white/5 border-white/10 text-white/90 rounded-tl-sm'
+                  }`}>
                     {renderMarkdown(msg?.text)}
                   </div>
                 </div>
               );
             })}
             <div ref={messagesEndRef} />
-          </div>
+      </div>
 
-          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_35%,transparent_35%,rgba(0,0,0,0.45)_100%)]" />
-        </div>
-
-        <div style={{ height: GAP }} />
-
-        <div
-          className={[
-            "rounded-2xl border border-white/[0.14]",
-            "bg-black/35 backdrop-blur-sm",
-            "px-4 py-3",
-            "relative",
-          ].join(" ")}
-          style={{ minHeight: INPUT_H }}
-        >
+      {/* Input Area */}
+      <div className="p-4 border-t border-white/10 bg-white/5 relative shrink-0">
           {/* Background Visualizer - always visible when speaking */}
           {userSpeaking && (
-            <div className="absolute inset-0 flex justify-center items-center py-2 pointer-events-none opacity-60">
+            <div className="absolute inset-0 flex justify-center items-center opacity-20 pointer-events-none">
               <AudioBar audioData={micAudioData} />
             </div>
           )}
 
           {/* Foreground Content - always visible */}
-          <div className="relative z-10">
+          <div className="relative z-10 flex flex-col gap-3">
             <textarea
               ref={textareaRef}
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={onKeyDown}
               placeholder={t('chat.placeholder')}
-              rows={2}
-              className={[
-                "w-full resize-none",
-                "bg-transparent outline-none",
-                "text-[15px] text-white/90",
-                "placeholder:text-white/35",
-                "leading-relaxed",
-              ].join(" ")}
+              rows={1}
+              className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/50 resize-none custom-scrollbar"
+              style={{ minHeight: '50px' }}
             />
 
             {/* Attachments preview */}
             {attachments.length ? (
-              <div className="mt-2 flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2">
                 {attachments.map((a) => {
                   const isImage = (a.file?.type || "").startsWith("image/");
                   return (
@@ -540,7 +495,7 @@ const ChatModule = ({
 
             {attachError ? <div className="mt-2 text-[11px] text-red-300/80">{attachError}</div> : null}
 
-            <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="flex items-center justify-between gap-3">
               <div className="text-[11px] text-white/35">
                 {t('chat.shift_enter')}
                 {attachments.length ? (
@@ -563,18 +518,10 @@ const ChatModule = ({
                 <button
                   type="button"
                   onClick={onPickFiles}
-                  className={[
-                    "px-3 py-1.5 rounded-xl",
-                    "border border-white/15",
-                    "text-[12px] tracking-[0.18em] uppercase",
-                    "transition-all",
-                    "bg-white/[0.04] hover:bg-white/[0.08] text-white/70",
-                  ].join(" ")}
+                  className="p-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/70 transition-colors"
                   title={t('chat.attach')}
                 >
-                  <span className="inline-flex items-center gap-2">
-                    <Paperclip size={14} />
-                  </span>
+                  <Paperclip size={16} />
                 </button>
 
                 <button
@@ -582,22 +529,18 @@ const ChatModule = ({
                   onClick={onClickSend}
                   disabled={!canSend}
                   className={[
-                    "px-4 py-1.5 rounded-xl",
-                    "border border-white/15",
-                    "text-[12px] tracking-[0.18em] uppercase",
-                    "transition-all",
+                    "p-2 rounded-lg border transition-all",
                     canSend
-                      ? "bg-white/[0.08] hover:bg-white/[0.12] text-white/80"
-                      : "bg-white/[0.04] text-white/30 cursor-not-allowed",
+                      ? "bg-white/20 border-white/50 text-white hover:bg-white/30"
+                      : "bg-white/5 border-white/10 text-white/30 cursor-not-allowed",
                   ].join(" ")}
                   title={t('chat.send')}
                 >
-                  {t('chat.send')}
+                  <Send size={16} />
                 </button>
               </div>
             </div>
           </div>
-        </div>
       </div>
     </div>
   );

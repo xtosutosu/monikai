@@ -5,7 +5,7 @@ import Visualizer from './components/Visualizer';
 import BrowserWindow from './components/BrowserWindow';
 import ChatModule from './components/ChatModule';
 import ToolsModule from './components/ToolsModule';
-import { X, Minus, Clock } from 'lucide-react';
+import { X, Minus, Clock, Lightbulb, Activity, Bell, AlertCircle } from 'lucide-react';
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 import ConfirmationPopup from './components/ConfirmationPopup';
 import AuthLock from './components/AuthLock';
@@ -14,20 +14,23 @@ import SettingsWindow from './components/SettingsWindow';
 import RemindersWindow from './components/RemindersWindow';
 import NotesWindow from './components/NotesWindow';
 import PersonalityWindow from './components/PersonalityWindow';
+import CameraWindow from './components/CameraWindow';
+import ScreenWindow from './components/ScreenWindow';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 
 const socket = io('http://localhost:8000');
 const { ipcRenderer } = window.require('electron');
 
 const getDefaultPositions = () => ({
-  video: { x: 40, y: 80 },
+  video: { x: window.innerWidth - 230, y: window.innerHeight - 210 },
+  screen: { x: window.innerWidth - 230, y: window.innerHeight - 210 },
   visualizer: { x: window.innerWidth / 2, y: window.innerHeight / 2 - 150 }, // no longer used for VN
   chat: { x: window.innerWidth / 2, y: window.innerHeight / 2 + 100 },       // will be docked
-  browser: { x: window.innerWidth / 2 - 300, y: window.innerHeight / 2 },
-  kasa: { x: window.innerWidth / 2, y: window.innerHeight / 2 + 50 },
-  reminders: { x: window.innerWidth / 2, y: window.innerHeight / 2 - 50 },
-  notes: { x: window.innerWidth / 2, y: window.innerHeight / 2 },
-  tools: { x: window.innerWidth / 2, y: window.innerHeight - 100 }
+  browser: { x: 320, y: window.innerHeight - 315 },
+  kasa: { x: window.innerWidth - 620, y: 310 },
+  reminders: { x: window.innerWidth - 230, y: 340 },
+  notes: { x: 270, y: 360 },
+  tools: { x: window.innerWidth / 2, y: window.innerHeight - 115 }
 });
 
 function AppContent() {
@@ -138,8 +141,8 @@ function AppContent() {
       return;
     }
 
-    const ON = 0.030;
-    const OFF = 0.020;
+    const ON = 0.06;
+    const OFF = 0.04;
     const HOLD_MS = 240;
 
     if (aiLevel > ON) {
@@ -164,36 +167,15 @@ function AppContent() {
   }, [aiLevel, aiSpeaking, isConnected]);
 
   useEffect(() => {
-    const canListen = isConnected && !isMuted;
-    if (!canListen) {
+    // Reset user speaking state if muted or disconnected
+    if (!isConnected || isMuted) {
       setUserSpeaking(false);
-      return;
-    }
-
-    const ON = 0.035;
-    const OFF = 0.025;
-    const HOLD_MS = 200;
-
-    if (micLevel > ON) {
       if (userOffTimerRef.current) {
         clearTimeout(userOffTimerRef.current);
         userOffTimerRef.current = null;
       }
-      setUserSpeaking(true);
-      return;
     }
-
-    if (userSpeaking && micLevel < OFF && !userOffTimerRef.current) {
-      userOffTimerRef.current = setTimeout(() => {
-        setUserSpeaking(false);
-        userOffTimerRef.current = null;
-      }, HOLD_MS);
-    }
-
-    if (!userSpeaking && micLevel < ON) {
-      setUserSpeaking(false);
-    }
-  }, [micLevel, userSpeaking, isConnected, isMuted]);
+  }, [isConnected, isMuted]);
 
   useEffect(() => {
     return () => {
@@ -216,6 +198,7 @@ function AppContent() {
   const [showSettings, setShowSettings] = useState(false);
   const [currentProject, setCurrentProject] = useState('default');
   const [showPersonalityWindow, setShowPersonalityWindow] = useState(false);
+  const [toolPermissions, setToolPermissions] = useState({});
 
   // ---------------------------------------------------------------------
   // Modular/Windowed State (kept for your movable windows)
@@ -228,8 +211,9 @@ function AppContent() {
     visualizer: { w: 550, h: 350 }, // no longer used for VN
     chat: { w: 980, h: 320 },
     tools: { w: 500, h: 80 },
-    browser: { w: 550, h: 380 },
-    video: { w: 320, h: 180 },
+    browser: { w: 600, h: 450 },
+    video: { w: 360, h: 240 },
+    screen: { w: 360, h: 240 },
     kasa: { w: 320, h: 500 },
     reminders: { w: 420, h: 560 },
     notes: { w: 500, h: 600 },
@@ -239,7 +223,7 @@ function AppContent() {
 
   // Z-Index Stacking Order (last element = highest z-index)
   const [zIndexOrder, setZIndexOrder] = useState([
-    'visualizer', 'chat', 'tools', 'video', 'browser', 'kasa', 'reminders', 'notes'
+    'visualizer', 'chat', 'tools', 'video', 'screen', 'browser', 'kasa', 'reminders', 'notes'
   ]);
 
   // ---------------------------------------------------------------------
@@ -361,7 +345,9 @@ function AppContent() {
       setElementPositions(prev => ({
         ...prev,
         chat: { x: width / 2, y: chatTop },
-        tools: { x: width / 2, y: height - 100 }
+        tools: { x: width / 2, y: height - 100 },
+        video: { x: width - 230, y: height - 210 },
+        screen: { x: width - 230, y: height - 210 }
       }));
     };
 
@@ -552,12 +538,15 @@ function AppContent() {
         setVisionMode(settings.video_mode || 'none');
         localStorage.setItem('video_mode', settings.video_mode || 'none');
       }
+      if (settings.tool_permissions) {
+        setToolPermissions(settings.tool_permissions);
+      }
       setSettingsLoaded(true);
     });
 
     socket.on('error', (data) => {
       console.error("Socket Error:", data);
-      addMessage('System', `Something feels off... (${data.msg})`); // Keeping generic fallback for now or use t() if msg is known
+      pushToast(`Something feels off... (${data.msg})`, 'error');
     });
 
     socket.on('browser_frame', (data) => {
@@ -568,13 +557,22 @@ function AppContent() {
       setShowBrowserWindow(true);
 
       if (!elementPositions.browser) {
-        const size = { w: 550, h: 380 };
-        const clamped = clampToViewport({ x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 }, size);
+        const size = { w: 600, h: 450 };
+        const clamped = clampToViewport({ x: 320, y: window.innerHeight - 315 }, size);
         setElementPositions(prev => ({ ...prev, browser: clamped }));
       }
     });
 
     socket.on('transcription', (data) => {
+      // Trigger listening state only when text is actually transcribed
+      if (data.sender === 'Ty' || data.sender === 'User') {
+        setUserSpeaking(true);
+        if (userOffTimerRef.current) clearTimeout(userOffTimerRef.current);
+        userOffTimerRef.current = setTimeout(() => {
+          setUserSpeaking(false);
+        }, 3000);
+      }
+
       setMessages(prev => {
         const list = prev || [];
         const lastMsg = list[list.length - 1];
@@ -1188,6 +1186,14 @@ const handleSend = (e) => {
   setInputValue('');
 };
 
+  const handleTogglePermission = (key) => {
+    setToolPermissions(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      socket.emit('update_settings', { tool_permissions: next });
+      return next;
+    });
+  };
+
 
   const handleMinimize = () => ipcRenderer.send('window-minimize');
   const handleMaximize = () => ipcRenderer.send('window-maximize');
@@ -1272,7 +1278,7 @@ const handleSend = (e) => {
     console.log(`[MouseDrag] MouseDown on ${id}`, { target: e.target.tagName });
 
     // In VN layout: visualizer + chat stay fixed
-    const fixedElements = ['visualizer', 'chat', 'video', 'tools'];
+    const fixedElements = ['visualizer', 'chat', 'video', 'screen'];
     if (fixedElements.includes(id)) {
       console.log(`[MouseDrag] ${id} is a fixed element, not draggable`);
       return;
@@ -1414,85 +1420,104 @@ const handleSend = (e) => {
 
       {/* Top Bar */}
       <div
-        className="z-50 flex items-center justify-between p-2 border-b border-white/10 bg-black/40 backdrop-blur-md select-none sticky top-0"
+        className="z-50 flex items-center justify-between px-4 h-14 border-b border-white/10 bg-black/40 backdrop-blur-2xl select-none sticky top-0"
         style={{ WebkitAppRegion: 'drag' }}
       >
-        <div className="flex items-center gap-4 pl-2">
-          <h1 
-            className="text-xl font-semibold tracking-[0.1em] text-white/70 drop-shadow-[0_0_10px_rgba(255,255,255,0.18)] cursor-help hover:text-white/90 transition-colors"
+        <div className="flex items-center gap-6" style={{ WebkitAppRegion: 'no-drag' }}>
+          {/* Logo / Personality Trigger */}
+          <div 
+            className="flex items-center gap-3 group cursor-pointer"
             onMouseEnter={() => setShowPersonalityWindow(true)}
             onMouseLeave={() => setShowPersonalityWindow(false)}
-            style={{ WebkitAppRegion: 'no-drag' }}
           >
-            Monik.AI
-          </h1>
-
-          {isVideoOn && (
-            <div className="text-[10px] text-white/70 border border-white/12 bg-white/5 px-1.5 py-0.5 rounded ml-2">
-              FPS: {fps}
-            </div>
-          )}
-
-          {kasaDevices.length > 0 && (
-            <div className="flex items-center gap-1.5 text-[10px] text-white/70 border border-white/12 bg-white/5 px-2 py-0.5 rounded ml-2">
-              <span className="text-white/70">💡</span>
-              <span>{kasaDevices.length} Device{kasaDevices.length !== 1 ? 's' : ''}</span>
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 pr-2" style={{ WebkitAppRegion: 'no-drag' }}>
-          <div className="flex items-center gap-1.5 text-[12px] text-white/60 px-2">
-            <Clock size={12} className="text-white/35" />
-            <span>{currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            <div className="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_white] group-hover:scale-125 transition-transform duration-300" />
+            <h1 className="text-sm font-bold tracking-[0.25em] text-white/80 group-hover:text-white transition-colors uppercase">
+              Monik.AI
+            </h1>
           </div>
 
-          <button onClick={handleMinimize} className="p-1 hover:bg-white/10 rounded text-white/70 transition-colors">
-            <Minus size={18} />
-          </button>
+          {/* Status Chips */}
+          <div className="flex items-center gap-2">
+            {isVideoOn && (
+              <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] font-mono text-white/50">
+                <Activity size={10} className="text-green-400" />
+                <span>FPS: {fps}</span>
+              </div>
+            )}
 
-          <button onClick={handleMaximize} className="p-1 hover:bg-white/10 rounded text-white/70 transition-colors">
-            <div className="w-[14px] h-[14px] border-2 border-current rounded-[2px]" />
-          </button>
+            {kasaDevices.length > 0 && (
+              <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] font-mono text-white/50">
+                <Lightbulb size={10} className="text-yellow-500" />
+                <span>{kasaDevices.length} DEV</span>
+              </div>
+            )}
+          </div>
+        </div>
 
-          <button onClick={handleCloseRequest} className="p-1 hover:bg-white/10 rounded text-white/70 transition-colors">
-            <X size={18} />
-          </button>
+        <div className="flex items-center gap-4" style={{ WebkitAppRegion: 'no-drag' }}>
+          {/* Clock */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
+            <Clock size={12} className="text-white" />
+            <span className="text-xs font-mono text-white/80 tracking-wide">
+              {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </div>
+
+          {/* Window Controls */}
+          <div className="flex items-center gap-1 pl-4 border-l border-white/10">
+            <button 
+              onClick={handleMinimize} 
+              className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white transition-colors"
+            >
+              <Minus size={16} />
+            </button>
+            <button 
+              onClick={handleMaximize} 
+              className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white transition-colors"
+            >
+              <div className="w-3.5 h-3.5 border-2 border-current rounded-[3px]" />
+            </button>
+            <button 
+              onClick={handleCloseRequest} 
+              className="p-2 hover:bg-red-500/20 hover:text-red-400 rounded-lg text-white/50 transition-colors"
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Toasts (System notifications) */}
-      <div className="fixed top-[72px] right-4 z-[999] flex flex-col gap-2 pointer-events-none">
+      <div className="fixed top-16 right-4 z-[100] flex flex-col gap-3 pointer-events-none">
         {toasts.map(t => (
           <div
             key={t.id}
-            className="pointer-events-auto w-[360px] max-w-[calc(100vw-24px)] rounded-2xl border border-cyan-500/30 bg-black/80 backdrop-blur-xl shadow-[0_0_30px_rgba(34,211,238,0.15)] overflow-hidden relative"
+            className="pointer-events-auto w-80 bg-black/60 backdrop-blur-2xl border border-white/10 rounded-xl shadow-2xl overflow-hidden animate-in slide-in-from-right-5 fade-in duration-300"
           >
-            <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay"></div>
-
-            <div className="relative z-10 px-4 py-3 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_5px_cyan]"></div>
-                  <div className="text-[10px] tracking-[0.22em] uppercase text-cyan-500 font-mono font-bold">
-                    MONIKA
+            <div className="p-4 flex gap-3">
+              <div className="shrink-0 mt-0.5">
+                {t.variant === 'error' ? (
+                  <div className="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center text-red-400 border border-red-500/20">
+                    <AlertCircle size={16} />
                   </div>
-                </div>
-                <div className="text-[13px] leading-relaxed text-cyan-100/90 break-words font-mono">
-                  {t.text}
-                </div>
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white border border-white/20">
+                    <Bell size={16} />
+                  </div>
+                )}
               </div>
-
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-white/90 leading-relaxed break-words">
+                  {t.text}
+                </p>
+              </div>
               <button
                 onClick={() => dismissToast(t.id)}
-                className="shrink-0 p-1 rounded-lg hover:bg-cyan-900/30 text-cyan-600 hover:text-cyan-400 transition-colors"
-                title="Dismiss"
+                className="shrink-0 -mt-1 -mr-1 p-1.5 text-white/30 hover:text-white hover:bg-white/10 rounded-lg transition-colors h-fit"
               >
                 <X size={14} />
               </button>
             </div>
-
-            <div className="relative z-10 h-[1px] w-full bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent opacity-70" />
           </div>
         ))}
       </div>
@@ -1500,63 +1525,34 @@ const handleSend = (e) => {
       {/* Main Content (over VN background) */}
       <div className="flex-1 relative z-10">
         {/* Floating Project Label */}
-        <div className="absolute top-[70px] left-1/2 -translate-x-1/2 text-white/65 text-xs tracking-widest pointer-events-none z-50 bg-black/50 px-2 py-1 rounded backdrop-blur-sm border border-white/12">
+        <div className="absolute top-[64px] left-1/2 -translate-x-1/2 text-white/65 text-xs tracking-widest pointer-events-none z-50 bg-black/50 px-2 py-1 rounded backdrop-blur-sm border border-white/12">
           {currentProject?.toUpperCase()}
         </div>
 
-        {/* Video / Screen Stack */}
-        {(visionMode === 'screen' || isVideoOn) && (
-          <div className="fixed bottom-4 right-4 flex flex-col gap-3 z-20">
-            {/* Screen Preview */}
-            {visionMode === 'screen' && (
-              <div className="relative transition-all duration-200 backdrop-blur-md bg-white/[0.06] border border-white/[0.14] shadow-xl rounded-xl">
-                <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-5 pointer-events-none mix-blend-overlay" />
+        {/* Screen Window */}
+        {visionMode === 'screen' && (
+          <ScreenWindow
+            imageSrc={visionFrame}
+            onClose={toggleScreenCapture}
+            position={elementPositions.screen}
+            onMouseDown={(e) => handleMouseDown(e, 'screen')}
+            activeDragElement={activeDragElement}
+            zIndex={getZIndex('screen')}
+          />
+        )}
 
-                <div className="relative border border-white/12 rounded-lg overflow-hidden shadow-[0_0_20px_rgba(255,255,255,0.10)] w-80 aspect-video bg-black/80">
-                  {visionFrame?.data ? (
-                    <img
-                      src={`data:${visionFrame?.mime_type || 'image/jpeg'};base64,${visionFrame.data}`}
-                      className="absolute inset-0 w-full h-full object-cover"
-                      alt="SCREEN"
-                    />
-                  ) : (
-                    <div className="absolute inset-0 flex items-center justify-center text-[10px] text-white/50 tracking-widest">
-                      NO SIGNAL
-                    </div>
-                  )}
-
-                  <div className="absolute top-2 left-2 text-[10px] text-white/70 bg-black/60 backdrop-blur px-2 py-0.5 rounded border border-white/12 z-10 font-semibold tracking-wider">
-                    SCREEN
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Camera Preview */}
-            <div
-              id="video"
-              className={`transition-all duration-200 
-                ${isVideoOn ? 'opacity-100' : 'opacity-0 pointer-events-none hidden'} 
-                backdrop-blur-md bg-white/[0.06] border border-white/[0.14] shadow-xl rounded-xl
-              `}
-            >
-              <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-5 pointer-events-none mix-blend-overlay" />
-
-              <div className="relative border border-white/12 rounded-lg overflow-hidden shadow-[0_0_20px_rgba(255,255,255,0.10)] w-80 aspect-video bg-black/80">
-                <video ref={videoRef} autoPlay muted className="absolute inset-0 w-full h-full object-cover opacity-0" />
-
-                <div className="absolute top-2 left-2 text-[10px] text-white/70 bg-black/60 backdrop-blur px-2 py-0.5 rounded border border-white/12 z-10 font-semibold tracking-wider">
-                  CAM_01
-                </div>
-
-                <canvas
-                  ref={canvasRef}
-                  className="absolute inset-0 w-full h-full opacity-80"
-                  style={{ transform: isCameraFlipped ? 'scaleX(-1)' : 'none' }}
-                />
-              </div>
-            </div>
-          </div>
+        {/* Camera Window */}
+        {isVideoOn && (
+          <CameraWindow
+            videoRef={videoRef}
+            canvasRef={canvasRef}
+            isCameraFlipped={isCameraFlipped}
+            onClose={toggleVideo}
+            position={elementPositions.video}
+            onMouseDown={(e) => handleMouseDown(e, 'video')}
+            activeDragElement={activeDragElement}
+            zIndex={getZIndex('video')}
+          />
         )}
 
         {/* Settings Modal */}
@@ -1576,6 +1572,8 @@ const handleSend = (e) => {
             setCursorSensitivity={setCursorSensitivity}
             isCameraFlipped={isCameraFlipped}
             setIsCameraFlipped={setIsCameraFlipped}
+            toolPermissions={toolPermissions}
+            onTogglePermission={handleTogglePermission}
             handleFileUpload={handleFileUpload}
             onClose={() => setShowSettings(false)}
           />
@@ -1583,33 +1581,16 @@ const handleSend = (e) => {
 
         {/* Browser Window */}
         {showBrowserWindow && (
-          <div
-            id="browser"
-            className={`absolute flex flex-col transition-[box-shadow,background-color,border-color] duration-200
-              backdrop-blur-xl bg-white/[0.06] border border-white/[0.14] shadow-2xl overflow-hidden rounded-lg
-              ${activeDragElement === 'browser' ? 'ring-2 ring-white/30 bg-white/[0.08]' : ''}
-            `}
-            style={{
-              left: elementPositions.browser?.x || window.innerWidth / 2 - 200,
-              top: elementPositions.browser?.y || window.innerHeight / 2,
-              transform: 'translate(-50%, -50%)',
-              width: `${elementSizes.browser.w}px`,
-              height: `${elementSizes.browser.h}px`,
-              pointerEvents: 'auto',
-              zIndex: getZIndex('browser')
-            }}
+          <BrowserWindow
+            imageSrc={browserData.image}
+            logs={browserData.logs}
+            onClose={() => setShowBrowserWindow(false)}
+            socket={socket}
+            position={elementPositions.browser}
             onMouseDown={(e) => handleMouseDown(e, 'browser')}
-          >
-            <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay z-10" />
-            <div className="relative z-20 w-full h-full">
-              <BrowserWindow
-                imageSrc={browserData.image}
-                logs={browserData.logs}
-                onClose={() => setShowBrowserWindow(false)}
-                socket={socket}
-              />
-            </div>
-          </div>
+            activeDragElement={activeDragElement}
+            zIndex={getZIndex('browser')}
+          />
         )}
 
         {/* VN Chat (docked bottom textbox) */}
@@ -1630,8 +1611,7 @@ const handleSend = (e) => {
           zIndex={10}
         />
 
-        {/* Footer Controls / Tools Module */}
-        <div className="z-20 flex justify-center pb-10 pointer-events-none">
+        {/* Tools Module */}
           <ToolsModule
             isConnected={isConnected}
             isMuted={isMuted}
@@ -1657,37 +1637,20 @@ const handleSend = (e) => {
             activeDragElement={activeDragElement}
             position={elementPositions.tools}
             onMouseDown={(e) => handleMouseDown(e, 'tools')}
+            zIndex={getZIndex('tools')}
           />
-        </div>
 
         {/* Kasa Window */}
         {showKasaWindow && (
-          <div
-            id="kasa"
-            className={`absolute flex flex-col transition-[box-shadow,background-color,border-color] duration-200
-              backdrop-blur-xl bg-white/[0.06] border border-white/[0.14] shadow-2xl overflow-hidden rounded-lg
-              ${activeDragElement === 'kasa' ? 'ring-2 ring-white/30 bg-white/[0.08]' : ''}
-            `}
-            style={{
-              left: elementPositions.kasa?.x,
-              top: elementPositions.kasa?.y,
-              transform: 'translate(-50%, -50%)',
-              width: `${elementSizes.kasa.w}px`,
-              height: `${elementSizes.kasa.h}px`,
-              pointerEvents: 'auto',
-              zIndex: getZIndex('kasa')
-            }}
+          <KasaWindow
+            socket={socket}
+            devices={kasaDevices}
+            onClose={() => setShowKasaWindow(false)}
+            position={elementPositions.kasa}
             onMouseDown={(e) => handleMouseDown(e, 'kasa')}
-          >
-            <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay z-10" />
-            <div className="relative z-20 w-full h-full">
-              <KasaWindow
-                socket={socket}
-                devices={kasaDevices}
-                onClose={() => setShowKasaWindow(false)}
-              />
-            </div>
-          </div>
+            activeDragElement={activeDragElement}
+            zIndex={getZIndex('kasa')}
+          />
         )}
 
         {/* Reminders Window */}
@@ -1704,31 +1667,14 @@ const handleSend = (e) => {
 
         {/* Notes Window */}
         {showNotesWindow && (
-          <div
-            id="notes"
-            className={`absolute flex flex-col transition-[box-shadow,background-color,border-color] duration-200
-              backdrop-blur-xl bg-white/[0.06] border border-white/[0.14] shadow-2xl overflow-hidden rounded-lg
-              ${activeDragElement === 'notes' ? 'ring-2 ring-white/30 bg-white/[0.08]' : ''}
-            `}
-            style={{
-              left: elementPositions.notes?.x,
-              top: elementPositions.notes?.y,
-              transform: 'translate(-50%, -50%)',
-              width: `${elementSizes.notes.w}px`,
-              height: `${elementSizes.notes.h}px`,
-              pointerEvents: 'auto',
-              zIndex: getZIndex('notes')
-            }}
+          <NotesWindow
+            socket={socket}
+            onClose={() => setShowNotesWindow(false)}
+            position={elementPositions.notes}
             onMouseDown={(e) => handleMouseDown(e, 'notes')}
-          >
-            <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay z-10" />
-            <div className="relative z-20 w-full h-full">
-              <NotesWindow
-                socket={socket}
-                onClose={() => setShowNotesWindow(false)}
-              />
-            </div>
-          </div>
+            activeDragElement={activeDragElement}
+            zIndex={getZIndex('notes')}
+          />
         )}
 
         {/* Tool Confirmation Modal */}
@@ -1745,6 +1691,30 @@ const handleSend = (e) => {
 function App() {
   return (
     <LanguageProvider>
+      <style>{`
+        ::-webkit-scrollbar {
+          width: 6px;
+          height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 3px;
+          transition: background 0.2s ease;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+          background: rgba(255, 255, 255, 0.4);
+        }
+        ::-webkit-scrollbar-corner {
+          background: transparent;
+        }
+        * {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+        }
+      `}</style>
       <AppContent />
     </LanguageProvider>
   );

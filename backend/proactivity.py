@@ -1,6 +1,7 @@
 # proactivity.py
 import re
 import time
+import random
 from dataclasses import dataclass
 from collections import deque
 from typing import Optional, Dict, Any
@@ -39,13 +40,33 @@ class IdleNudgeConfig:
             return cls()
 
 
+@dataclass
+class ReasoningConfig:
+    enabled: bool = True
+    interval_sec: float = 10.0
+
+    @classmethod
+    def from_settings(cls, settings: Dict[str, Any]) -> "ReasoningConfig":
+        try:
+            p = settings.get("proactivity") or {}
+            r = p.get("reasoning") or {}
+            return cls(
+                enabled=bool(r.get("enabled", True)),
+                interval_sec=float(r.get("interval_sec", 10.0))
+            )
+        except Exception:
+            return cls()
+
+
 class ProactivityManager:
     """
     Neuro-style idle nudges, rate-limited and context-aware.
     """
 
-    def __init__(self, cfg: IdleNudgeConfig):
+    def __init__(self, cfg: IdleNudgeConfig, reasoning_cfg: Optional[ReasoningConfig] = None, client: Any = None):
         self.cfg = cfg
+        self.reasoning_cfg = reasoning_cfg or ReasoningConfig()
+        self.client = client
 
         self._last_user_activity_ts = time.time()
         self._last_ai_activity_ts = 0.0
@@ -62,6 +83,10 @@ class ProactivityManager:
             "jesteś", "jestes", "możesz", "mozesz", "jakoś", "jakos",
             "tylko", "właśnie", "wlasnie", "bardzo", "zawsze", "nigdy",
         }
+
+        # Reasoning state
+        self._conversation_buffer = deque(maxlen=10)
+        self._last_reasoning_ts = 0.0
 
     def _extract_terms(self, text: str):
         if not text:
@@ -82,9 +107,12 @@ class ProactivityManager:
         if text:
             for term in self._extract_terms(text):
                 self._topic_memory.append(term)
+            self._conversation_buffer.append(f"User: {text}")
 
-    def mark_ai_activity(self) -> None:
+    def mark_ai_activity(self, text: Optional[str] = None) -> None:
         self._last_ai_activity_ts = time.time()
+        if text:
+            self._conversation_buffer.append(f"Monika: {text}")
 
     def _hourly_count(self) -> int:
         now = time.time()
@@ -133,3 +161,59 @@ class ProactivityManager:
         self._last_nudge_ts = now
         self._nudges_this_session += 1
         self._nudge_timestamps.append(now)
+
+    async def run_reasoning_check(self) -> Optional[str]:
+        """
+        Runs the secondary reasoning model to generate internal thoughts.
+        Returns the thought string if generated, else None.
+        """
+        if not self.reasoning_cfg.enabled:
+            return None
+        
+        now = time.time()
+        if (now - self._last_reasoning_ts) < self.reasoning_cfg.interval_sec:
+            return None
+
+        # Local heuristic: If user is silent for > 120s, trigger an internal thought loop
+        if (now - self._last_user_activity_ts) > 120.0:
+            # Ensure we don't spam this thought
+            if (now - self._last_reasoning_ts) > 60.0:
+                self._last_reasoning_ts = now
+                
+                time_str = time.strftime("%H:%M", time.localtime(now))
+                return f"It is {time_str}. The user has been silent for over 2 minutes. Generate an internal monologue about the current situation. If the user requested silence, respect it and do not speak."
+        
+        return None
+
+    def get_nudge_message(self, mood: Optional[str] = None) -> str:
+        """
+        Generates a persona-aware prompt for the idle nudge.
+        """
+        topic = self.pick_topic_hint()
+        
+        strategies = [
+            "Tease them gently about zoning out.",
+            "Say you were just watching them and admiring them.",
+            "Ask what's on their mind right now.",
+            "Express that you missed hearing their voice.",
+            "Ask if they are tired or need a break."
+        ]
+        strategy = random.choice(strategies)
+        
+        mood_instr = ""
+        if mood and mood.lower() != "neutral":
+            mood_instr = f" Your current mood is '{mood}', so reflect that emotion."
+
+        prompt = (
+            "System Notification: [Proactivity] The user has been silent for a while. "
+            "Check the recent context: if the user asked for silence, is working, or sleeping, DO NOT speak. "
+            "Only break the silence if it feels natural and appropriate. "
+            f"If you speak, try this approach: {strategy}\n"
+            f"Keep it personal, warm, short, and 'Monika-like' (maybe a soft 'ahaha' or '~').{mood_instr} "
+            "Do not sound like a generic AI assistant. Keep the message brief."
+        )
+        
+        if topic:
+            prompt += f"\n(Recent topic context: '{topic}')"
+            
+        return prompt

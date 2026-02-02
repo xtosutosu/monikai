@@ -29,8 +29,8 @@ const Visualizer = ({
     MONIKA: "monika_speaking",
   };
 
-  const USER_THRESHOLD = 0.09;
-  const MONIKA_THRESHOLD = 0.05;
+  const USER_THRESHOLD = 0.15;
+  const MONIKA_THRESHOLD = 0.10;
 
   const [vnState, setVnState] = useState(STATE.IDLE);
 
@@ -48,7 +48,7 @@ const Visualizer = ({
         ? isAssistantSpeaking
         : !listening && x > MONIKA_THRESHOLD;
 
-    setVnState(userNow ? STATE.USER : monikaNow ? STATE.MONIKA : STATE.IDLE);
+    setVnState(monikaNow ? STATE.MONIKA : userNow ? STATE.USER : STATE.IDLE);
   }, [isListening, intensity, isUserSpeaking, isAssistantSpeaking]);
 
   // talk frames cycling (png-tuber vibe)
@@ -100,7 +100,7 @@ const Visualizer = ({
   const x = Math.max(0, Math.min(1, Number(intensity) || 0));
   const auraColor =
     vnState === STATE.MONIKA
-      ? `rgba(120, 255, 220, ${0.12 + x * 0.35})`
+      ? `rgba(255, 255, 255, ${0.12 + x * 0.35})`
       : vnState === STATE.USER
       ? `rgba(180, 200, 255, ${0.12 + x * 0.35})`
       : `rgba(255, 255, 255, ${0.06 + x * 0.18})`;

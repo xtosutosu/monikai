@@ -1,25 +1,27 @@
 {
     "face_auth_enabled": false,
+    "show_internal_thoughts": true,
     "tool_permissions": {
+        "cancel_reminder": true,
+        "control_light": true,
+        "create_project": true,
+        "clear_work_memory": true,
+        "notes_set": true,
         "run_web_agent": true,
+        "switch_project": true,
         "write_file": true,
         "read_directory": true,
         "read_file": true,
-        "create_project": true,
-        "switch_project": true,
         "list_projects": true,
         "notes": false,
         "update_work_memory": false,
         "get_work_memory": false,
         "commit_work_memory": false,
-        "clear_work_memory": true,
         "create_directory": true,
-        "control_light": true,
         "list_smart_devices": true,
         "get_time_context": false,
         "create_reminder": false,
-        "list_reminders": false,
-        "cancel_reminder": false
+        "list_reminders": false
     },
     "kasa_devices": [],
     "camera_flipped": false,
@@ -43,16 +45,16 @@
     "proactivity": {
         "idle_nudges": {
             "enabled": true,
-            "threshold_sec": 120,
+            "threshold_sec": 180,
             "cooldown_sec": 300,
             "min_ai_quiet_sec": 10,
             "max_per_session": 6,
             "max_per_hour": 12,
             "topic_memory_size": 6
+        },
+        "reasoning": {
+            "enabled": true,
+            "interval_sec": 10.0
         }
-    },
-    "time_settings": {
-        "mode": "system",
-        "timezone": "Europe/Warsaw"
     }
 }

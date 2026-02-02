@@ -1,9 +1,23 @@
 [
   {
     "id": "1ca499ca-ff89-40b4-916a-ca902ba7f9da",
-    "summary": "Urodziny 🎉",
+    "summary": "Moje urodziny 🎉",
     "start_iso": "2026-02-04T00:00:00",
     "end_iso": "2026-02-05T00:00:00",
+    "description": null
+  },
+  {
+    "id": "fd1df7bb-ab33-407f-a415-f4622007783a",
+    "summary": "Zrobić poradnik AI w pracy",
+    "start_iso": "2026-02-03T08:00:00",
+    "end_iso": "2026-02-03T12:00:00",
+    "description": null
+  },
+  {
+    "id": "6a37d778-b4b7-4e83-a8ce-e2918a7e8c4d",
+    "summary": "Kraków Team Meeting at Work",
+    "start_iso": "2026-02-04T11:30:00",
+    "end_iso": "2026-02-04T12:30:00",
     "description": null
   }
 ]

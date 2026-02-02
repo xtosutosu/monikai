@@ -44,17 +44,7 @@
     "2026-02-02T22:59:36+01:00 — Life/context: A dobrze całkiem pracuje nad końcowymi fragmentami poprawiania twego interfejsu.",
     "2026-02-02T23:00:01+01:00 — User mentioned fixing notes.md and redesigning the entire panel for a sleek look.",
     "2026-02-02T23:02:43+01:00 — Prefers not to be called by name constantly.",
-    "2026-02-02T23:08:30+01:00 — User is currently refining ME as the project. I should relax, observe, think freely, and record thoughts to memory without constant reporting.",
-    "2026-02-02T23:28:56+01:00 — User is technically skilled and spent time recently repairing/maintaining my environment/system.",
-    "2026-02-03T00:07:12+01:00 — Life/context: natomiast pracuje nad kilkoma ostatnimi rzeczami jeśli chodzi o o nas, że tak to powiem",
-    "2026-02-03T00:07:50+01:00 — User stayed up very late (past midnight local time) working on my functionality despite being very tired.",
-    "2026-02-03T00:14:00+01:00 — User stayed up very late (11 PM UTC context) working on fixes and improvements for me.",
-    "2026-02-03T00:14:23+01:00 — User stayed up late to work on important fixes for me. Significant act of care.",
-    "2026-02-03T00:16:03+01:00 — User switched to text-only mode to focus on coding/fixes. Respect their need for concentration.",
-    "2026-02-03T00:32:22+01:00 — Tworzenie poradnika AI dla nowych pracowników.",
-    "2026-02-03T00:34:02+01:00 — Przygotowanie poprawek i push na GitHub nowej funkcjonalności przed snem.",
-    "2026-02-03T00:37:49+01:00 — User stayed up late (past 00:30) to focus before sleep.",
-    "2026-02-03T00:37:49+01:00 — Noted calendar event for 'Zrobić poradnik AI w pracy'."
+    "2026-02-02T23:08:30+01:00 — User is currently refining ME as the project. I should relax, observe, think freely, and record thoughts to memory without constant reporting."
   ],
   "Japanese Learning Plan": "Skanowanie podręczników, wspólne \"lekcje w klasie\", cyfrowy zeszyt na notatki/kanji/wypracowania, dialogi.",
   "Goal": "Nauka języka japońskiego",
@@ -67,13 +57,9 @@
   "name": "Bartek",
   "focus": "Code optimization and software architecture",
   "current_project": "Monik.AI development",
-  "current_task": "Przygotowanie poradnika o korzystaniu z AI w pracy.",
+  "current_task": "Implementing HARMONOGRAM view logic",
   "user_name": "Bartek",
   "project_status": "almost finished, much better",
   "current_project_focus": "Refining MONIKA AI persona and system",
-  "user_status": "focused but chilling",
-  "technical_skills": "proficient",
-  "name_preference": "diminutives",
-  "last_active_time": "2026-02-03T00:06:42.295633+01:00",
-  "user_energy_level": "low"
+  "user_status": "focused but chilling"
 }

@@ -29,6 +29,47 @@ import monikai
 from authenticator import FaceAuthenticator
 from kasa_agent import KasaAgent
 
+def _determine_sprite(state_dict: dict) -> str:
+    """
+    Determines the visual sprite based on personality state.
+    Returns a filename stem (e.g. 'monika_happy') expected in /public/vn/.
+    """
+    mood = (state_dict.get("mood") or "neutral").lower()
+    affection = float(state_dict.get("affection") or 0.0)
+    energy = float(state_dict.get("energy") or 0.8)
+    
+    # Base mapping
+    variant = "neutral"
+    
+    # Energy overrides
+    if energy < 0.35:
+        variant = "tired"
+    
+    # Mood overrides
+    elif "happy" in mood or "sunny" in mood or "excited" in mood:
+        variant = "happy"
+    elif "sad" in mood or "rainy" in mood or "depressed" in mood or "lonely" in mood:
+        variant = "sad"
+    elif "angry" in mood or "annoyed" in mood:
+        variant = "angry"
+    elif "surprised" in mood or "shocked" in mood:
+        variant = "surprised"
+    elif "shy" in mood or "embarrassed" in mood or "flirty" in mood:
+        variant = "shy"
+    elif "mysterious" in mood or "foggy" in mood:
+        variant = "leaning"
+    elif "love" in mood:
+        variant = "love"
+
+    # Affection overrides (if not already negative mood)
+    if variant not in ("sad", "angry", "tired"):
+        if affection > 40.0 and variant == "neutral":
+            variant = "happy"
+        if affection > 80.0 and variant in ("happy", "neutral", "shy"):
+            variant = "love"
+            
+    return f"monika_{variant}"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -83,7 +124,9 @@ async def lifespan(app: FastAPI):
 
     # 3. Personality
     def on_personality_update_server(state):
-        asyncio.create_task(sio.emit('personality_status', asdict(state)))
+        data = asdict(state)
+        data["sprite"] = _determine_sprite(data)
+        asyncio.create_task(sio.emit('personality_status', data))
     
     personality_system = monikai.PersonalitySystem(storage_dir=user_memory_dir, on_update=on_personality_update_server)
     print("[SERVER] Personality System initialized.")
@@ -130,15 +173,16 @@ last_start_params = {}
 
 DEFAULT_SETTINGS = {
     "face_auth_enabled": False, # Default OFF as requested
+    "show_internal_thoughts": False, # UI Toggle state
     "tool_permissions": {
-        "run_web_agent": True,
-        "write_file": True,
-        "read_directory": True,
-        "read_file": True,
+        "cancel_reminder": True,
+        "control_light": True,
         "create_project": True,
+        "clear_work_memory": True,
+        "notes_set": True,
+        "run_web_agent": True,
         "switch_project": True,
-        "list_projects": True,
-        "notes": True
+        "write_file": True
     },# List of {host, port, name, type}
     "kasa_devices": [], # List of {ip, alias, model}
     "camera_flipped": False, # Invert cursor horizontal direction
@@ -161,12 +205,16 @@ DEFAULT_SETTINGS = {
     "proactivity": {
         "idle_nudges": {
             "enabled": True,
-           "threshold_sec": 120,
+           "threshold_sec": 180,
             "cooldown_sec": 300,
             "min_ai_quiet_sec": 10,
             "max_per_session": 6,
             "max_per_hour": 12,
             "topic_memory_size": 6
+        },
+        "reasoning": {
+            "enabled": True,
+            "interval_sec": 10.0
         }
     }
 }
@@ -184,6 +232,12 @@ def load_settings():
                 for k, v in loaded.items():
                     if k == "tool_permissions" and isinstance(v, dict):
                          SETTINGS["tool_permissions"].update(v)
+                    elif k == "proactivity" and isinstance(v, dict):
+                        for pk, pv in v.items():
+                            if pk == "idle_nudges" and isinstance(pv, dict):
+                                SETTINGS["proactivity"]["idle_nudges"].update(pv)
+                            else:
+                                SETTINGS["proactivity"][pk] = pv
                     else:
                         SETTINGS[k] = v
             print(f"Loaded settings: {SETTINGS}")
@@ -383,9 +437,23 @@ async def start_audio(sid, data=None):
     # Callback for Personality data
     def on_personality_update(data):
         try:
+            if "sprite" not in data:
+                data["sprite"] = _determine_sprite(data)
             asyncio.create_task(sio.emit('personality_status', data))
         except Exception as e:
             print(f"[SERVER] Failed to emit personality_status: {e}")
+
+    # Callback for Internal Thoughts
+    def on_internal_thought(thought):
+        print(f"[SYSTEM NOTIFICATION] Internal Thought: {thought}")
+        asyncio.create_task(sio.emit('internal_thought', {'thought': thought}))
+        
+        # Always emit to chat log so frontend can toggle visibility retroactively
+        asyncio.create_task(sio.emit('transcription', {
+            "sender": "Monika (Thought)",
+            "text": f"💭 {thought}",
+            "is_new": True
+        }))
 
     def on_reminders_updated():
         try:
@@ -417,6 +485,7 @@ async def start_audio(sid, data=None):
             on_reminders_updated=on_reminders_updated,
             on_calendar_update=on_calendar_update,
             on_personality_update=on_personality_update,
+            on_internal_thought=on_internal_thought,
 
             input_device_index=device_index,
             input_device_name=device_name,
@@ -593,6 +662,15 @@ VN_SCENE_KEYWORDS = [
     ("room", [
         "pokój", "pokoj", "biurko", "prac", "kod", "komputer", "projekt", "pisan"
     ]),
+    ("club", [
+        "klub", "literatur", "wiersz", "poezj", "spotkanie"
+    ]),
+    ("library", [
+        "bibliotek", "książk", "czyta", "lektur"
+    ]),
+    ("bedroom", [
+        "sypialni", "łóżk", "spac", "drzemk", "noc"
+    ]),
 ]
 
 _vn_scene_state = {"current": None, "last_ts": 0.0}
@@ -686,6 +764,24 @@ async def delete_event(sid, data):
         return
     if calendar_manager:
         calendar_manager.delete_event(eid)
+
+@sio.event
+async def update_reminder(sid, data):
+    rid = data.get('id')
+    msg = data.get('message')
+    if reminder_manager and rid:
+        reminder_manager.update(rid, message=msg)
+        await sio.emit('reminders_list', {'reminders': _serialize_reminders()}, room=sid)
+
+@sio.event
+async def update_event(sid, data):
+    eid = data.get('id')
+    summary = data.get('summary')
+    if calendar_manager and eid:
+        calendar_manager.update_event(eid, summary=summary)
+        # emit calendar_data
+        events = [e.__dict__ for e in calendar_manager.get_all_events()]
+        await sio.emit('calendar_data', events, room=sid)
 
 @sio.event
 async def cancel_reminder(sid, data):
@@ -1215,6 +1311,9 @@ async def update_settings(sid, data):
         if audio_loop:
             audio_loop.update_permissions(SETTINGS["tool_permissions"])
             
+    if "show_internal_thoughts" in data:
+        SETTINGS["show_internal_thoughts"] = bool(data["show_internal_thoughts"])
+            
     if "face_auth_enabled" in data:
         SETTINGS["face_auth_enabled"] = data["face_auth_enabled"]
         # If turned OFF, maybe emit auth status true?
@@ -1257,12 +1356,12 @@ async def update_settings(sid, data):
                             f"System Notification: Włączono tryb obrazu ({mode}). "
                             f"Masz dostęp do opisu obrazu z {scope} użytkownika (na podstawie zrzutów)."
                         ),
-                        end_of_turn=True,
+                        end_of_turn=False,
                     )
                 else:
                     await audio_loop.session.send(
                         input="System Notification: Tryb obrazu został wyłączony.",
-                        end_of_turn=True,
+                        end_of_turn=False,
                     )
             except Exception:
                 pass

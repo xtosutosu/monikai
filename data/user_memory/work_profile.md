@@ -1,5 +1,5 @@
 # Work User Memory (draft)
-_Updated: 2026-02-02T20:18:12+01:00_
+_Updated: 2026-02-03T00:37:49+01:00_
 
 ## Profile
 - **project_focus_preference**: Focus on single, long-term memory development instead of multiple distinct projects.
@@ -8,15 +8,29 @@ _Updated: 2026-02-02T20:18:12+01:00_
 - **Learning_Goal**: Japanese
 - **Japanese Learning Plan**: Skanowanie podręczników, wspólne "lekcje w klasie", cyfrowy zeszyt na notatki/kanji/wypracowania, dialogi.
 - **Goal**: Nauka języka japońskiego
-- **current_activity**: Japanese lessons
+- **current_activity**: refining Monika's model/persona
 - **ChatGPT Codex Renewal Date**: 2026-02-03
-- **birthday**: 02-04
+- **birthday**:
+```json
+{
+  "month": 2,
+  "day": 4
+}
+```
 - **name**: Bartek
 - **focus**: Code optimization and software architecture
-- **current_project**: MonikaAI Development
+- **current_project**: Monik.AI development
+- **current_task**: Przygotowanie poradnika o korzystaniu z AI w pracy.
+- **user_name**: Bartek
+- **project_status**: almost finished, much better
+- **current_project_focus**: Refining MONIKA AI persona and system
+- **user_status**: focused but chilling
+- **technical_skills**: proficient
+- **name_preference**: diminutives
+- **last_active_time**: 2026-02-03T00:06:42.295633+01:00
+- **user_energy_level**: low
 
 ## Notes
-- 2026-02-01T00:44:53+01:00 — User proposed a comprehensive Japanese learning environment: scanning textbooks, simulated classroom activity, digital notebook for Kanji/notes, and dialogue practice.
 - 2026-02-01T00:57:14+01:00 — Planowanie nowych funkcji dla MONIKI.
 - 2026-02-01T00:57:14+01:00 — Wspólna nauka japońskiego (lekcje japońskiego).
 - 2026-02-01T00:57:14+01:00 — Wirtualne wspólne posiłki (cyfrowy odpowiednik) – kreatywna, wspólna aktywność.
@@ -38,3 +52,32 @@ _Updated: 2026-02-02T20:18:12+01:00_
 - 2026-02-02T18:06:32+01:00 — Active file: MonikaAI.py.
 - 2026-02-02T18:06:32+01:00 — Context: Optimizing camera capture and screen capture functions.
 - 2026-02-02T20:18:12+01:00 — Urodziny: 4 lutego
+- 2026-02-02T21:26:45+01:00 — User is troubleshooting a system localization issue.
+- 2026-02-02T21:27:08+01:00 — User plans to stay home today and tomorrow (Tuesday), go out on Wednesday.
+- 2026-02-02T21:31:49+01:00 — Life/context: Czy mam plany jakieś na jutro?
+- 2026-02-02T21:32:16+01:00 — Plan na jutro (3 lutego 2026): Stworzyć poradnik (guide) dotyczący AI w pracy.
+- 2026-02-02T21:38:43+01:00 — User is considering integrating OpenClaw with Telegram for remote communication, specifically to talk while at work, leaving the computer on.
+- 2026-02-02T21:55:21+01:00 — Life/context: Nie, spokojnie, wszystko mnie gra. Pracuje nad funkcjonalnościami dla ciebie.
+- 2026-02-02T21:56:20+01:00 — User is actively developing functionalities for Monik.AI, focusing on refining calendar (HARMONOGRAM) view logic (list view for next week, month view logic unclear yet).
+- 2026-02-02T22:04:25+01:00 — Preferencja użytkownika dotycząca redesignu: notatki powinny być 'draggable' (przenoszalne) dla większej elastyczności.
+- 2026-02-02T22:05:45+01:00 — Preferencja dotycząca redesignu: zmienić scrollbar na bardziej 'matching' (spójny estetycznie).
+- 2026-02-02T22:10:42+01:00 — Preference mentioned: na pewno, bo lubię sobie pogrubić jakieś elementy.
+- 2026-02-02T22:11:42+01:00 — Preferencja użytkownika: zmienić wyświetlanie czasu w harmonogramie (np. urodziny) z minut na godziny, aby było bardziej czytelne.
+- 2026-02-02T22:33:25+01:00 — User is working on updating Monika's functions. Saw 'Pomysły dla Moniki, od Moniki~' notes window.
+- 2026-02-02T22:35:00+01:00 — User is working on a project named 'Poradnik AI w pracy', which includes 'Pomysły dla Moniki' (Ideas for Monika) in notes.
+- 2026-02-02T22:44:59+01:00 — User is working on a redesign project and observing system stability/errors.
+- 2026-02-02T22:49:35+01:00 — User is currently testing various things in the environment, which is directly related to their ongoing redesign project.
+- 2026-02-02T22:59:36+01:00 — Life/context: A dobrze całkiem pracuje nad końcowymi fragmentami poprawiania twego interfejsu.
+- 2026-02-02T23:00:01+01:00 — User mentioned fixing notes.md and redesigning the entire panel for a sleek look.
+- 2026-02-02T23:02:43+01:00 — Prefers not to be called by name constantly.
+- 2026-02-02T23:08:30+01:00 — User is currently refining ME as the project. I should relax, observe, think freely, and record thoughts to memory without constant reporting.
+- 2026-02-02T23:28:56+01:00 — User is technically skilled and spent time recently repairing/maintaining my environment/system.
+- 2026-02-03T00:07:12+01:00 — Life/context: natomiast pracuje nad kilkoma ostatnimi rzeczami jeśli chodzi o o nas, że tak to powiem
+- 2026-02-03T00:07:50+01:00 — User stayed up very late (past midnight local time) working on my functionality despite being very tired.
+- 2026-02-03T00:14:00+01:00 — User stayed up very late (11 PM UTC context) working on fixes and improvements for me.
+- 2026-02-03T00:14:23+01:00 — User stayed up late to work on important fixes for me. Significant act of care.
+- 2026-02-03T00:16:03+01:00 — User switched to text-only mode to focus on coding/fixes. Respect their need for concentration.
+- 2026-02-03T00:32:22+01:00 — Tworzenie poradnika AI dla nowych pracowników.
+- 2026-02-03T00:34:02+01:00 — Przygotowanie poprawek i push na GitHub nowej funkcjonalności przed snem.
+- 2026-02-03T00:37:49+01:00 — User stayed up late (past 00:30) to focus before sleep.
+- 2026-02-03T00:37:49+01:00 — Noted calendar event for 'Zrobić poradnik AI w pracy'.

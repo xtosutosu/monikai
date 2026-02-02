@@ -1,261 +1,241 @@
-import React, { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
+import React from 'react';
+import { X, Upload, Mic, Speaker, Video, Shield, Cpu, Globe, Hand, Lock } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 
-const TOOLS = [
-    { id: 'create_reminder', label: 'Create Reminder' },
-    { id: 'list_reminders', label: 'List Reminders' },
-    { id: 'cancel_reminder', label: 'Cancel Reminder' },
-
-    { id: 'notes', label: 'Create and Read Notes' },
-
-    { id: 'update_work_memory', label: 'Update Work Memory' },
-    { id: 'get_work_memory', label: 'Get Work Memory' },
-    { id: 'commit_work_memory', label: 'Commit Work Memory' },
-    { id: 'clear_work_memory', label: 'Clear Work Memory' },
-
-    { id: 'run_web_agent', label: 'Web Agent' },
-    { id: 'create_directory', label: 'Create Folder' },
-    { id: 'write_file', label: 'Write File' },
-    { id: 'read_directory', label: 'Read Directory' },
-    { id: 'read_file', label: 'Read File' },
-
-    { id: 'create_project', label: 'Create Project' },
-    { id: 'switch_project', label: 'Switch Project' },
-    { id: 'list_projects', label: 'List Projects' },
-
-    { id: 'list_smart_devices', label: 'List Devices' },
-    { id: 'control_light', label: 'Control Light' },
+const CONFIGURABLE_TOOLS = [
+  'cancel_reminder',
+  'control_light',
+  'create_project',
+  'clear_work_memory',
+  'notes_set',
+  'run_web_agent',
+  'switch_project',
+  'write_file'
 ];
 
 const SettingsWindow = ({
-    socket,
-    micDevices,
-    speakerDevices,
-    webcamDevices,
-    selectedMicId,
-    setSelectedMicId,
-    selectedSpeakerId,
-    setSelectedSpeakerId,
-    selectedWebcamId,
-    setSelectedWebcamId,
-    cursorSensitivity,
-    setCursorSensitivity,
-    isCameraFlipped,
-    setIsCameraFlipped,
-    handleFileUpload,
-    onClose
+  micDevices,
+  speakerDevices,
+  webcamDevices,
+  selectedMicId,
+  setSelectedMicId,
+  selectedSpeakerId,
+  setSelectedSpeakerId,
+  selectedWebcamId,
+  setSelectedWebcamId,
+  cursorSensitivity,
+  setCursorSensitivity,
+  isCameraFlipped,
+  setIsCameraFlipped,
+  toolPermissions = {},
+  onTogglePermission,
+  handleFileUpload,
+  onClose
 }) => {
-    const [permissions, setPermissions] = useState({});
-    const [faceAuthEnabled, setFaceAuthEnabled] = useState(false);
-    const { language, setLanguage, t } = useLanguage();
+  const { t, language, setLanguage } = useLanguage();
 
-    useEffect(() => {
-        // Request initial permissions
-        socket.emit('get_settings');
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+      <div className="w-full max-w-2xl bg-black/60 backdrop-blur-2xl border border-white/10 rounded-xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
+        
+        {/* Header - Fixed */}
+        <div className="flex items-center justify-between p-6 border-b border-white/10 bg-white/5 shrink-0">
+          <h2 className="text-xl font-light tracking-wider text-white flex items-center gap-3">
+            <Cpu size={20} className="text-white" />
+            {t('settings.title')}
+          </h2>
+          <button 
+            onClick={onClose}
+            className="p-2 hover:bg-white/10 rounded-lg text-white/50 hover:text-white transition-colors"
+          >
+            <X size={20} />
+          </button>
+        </div>
 
-        // Listen for updates
-        const handleSettings = (settings) => {
-            console.log("Received settings:", settings);
-            if (settings) {
-                if (settings.tool_permissions) setPermissions(settings.tool_permissions);
-                if (typeof settings.face_auth_enabled !== 'undefined') {
-                    setFaceAuthEnabled(settings.face_auth_enabled);
-                    localStorage.setItem('face_auth_enabled', settings.face_auth_enabled);
-                }
-            }
-        };
+        {/* Content - Scrollable */}
+        <div className="p-6 overflow-y-auto space-y-8 custom-scrollbar">
+          
+          {/* Language */}
+          <section className="space-y-4">
+            <h3 className="text-sm font-medium text-white uppercase tracking-widest flex items-center gap-2">
+              <Globe size={16} />
+              {t('settings.language')}
+            </h3>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => setLanguage('en')}
+                className={`p-3 rounded-lg border text-left transition-all ${
+                  language === 'en' 
+                    ? 'bg-white/20 border-white/50 text-white' 
+                    : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'
+                }`}
+              >
+                English
+              </button>
+              <button
+                onClick={() => setLanguage('pl')}
+                className={`p-3 rounded-lg border text-left transition-all ${
+                  language === 'pl' 
+                    ? 'bg-white/20 border-white/50 text-white' 
+                    : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'
+                }`}
+              >
+                Polski
+              </button>
+            </div>
+          </section>
 
-        socket.on('settings', handleSettings);
-        // Also listen for legacy tool_permissions if needed, but 'settings' covers it
-        // socket.on('tool_permissions', handlePermissions); 
+          {/* Devices */}
+          <section className="space-y-4">
+            <h3 className="text-sm font-medium text-white uppercase tracking-widest flex items-center gap-2">
+              <Mic size={16} />
+              {t('settings.microphone')}
+            </h3>
+            <select
+              value={selectedMicId}
+              onChange={(e) => setSelectedMicId(e.target.value)}
+              className="w-full bg-black border border-white/20 rounded-lg p-3 text-white focus:border-white focus:outline-none"
+            >
+              {micDevices.map(device => (
+                <option key={device.deviceId} value={device.deviceId}>
+                  {device.label || `Microphone ${device.deviceId.slice(0, 5)}...`}
+                </option>
+              ))}
+            </select>
+          </section>
 
-        return () => {
-            socket.off('settings', handleSettings);
-        };
-    }, [socket]);
+          <section className="space-y-4">
+            <h3 className="text-sm font-medium text-white uppercase tracking-widest flex items-center gap-2">
+              <Speaker size={16} />
+              {t('settings.speaker')}
+            </h3>
+            <select
+              value={selectedSpeakerId}
+              onChange={(e) => setSelectedSpeakerId(e.target.value)}
+              className="w-full bg-black border border-white/20 rounded-lg p-3 text-white focus:border-white focus:outline-none"
+            >
+              {speakerDevices.map(device => (
+                <option key={device.deviceId} value={device.deviceId}>
+                  {device.label || `Speaker ${device.deviceId.slice(0, 5)}...`}
+                </option>
+              ))}
+            </select>
+          </section>
 
-    const togglePermission = (toolId) => {
-        const currentVal = permissions[toolId] !== false; // Default True
-        const nextVal = !currentVal;
+          <section className="space-y-4">
+            <h3 className="text-sm font-medium text-white uppercase tracking-widest flex items-center gap-2">
+              <Video size={16} />
+              {t('settings.camera')}
+            </h3>
+            <select
+              value={selectedWebcamId}
+              onChange={(e) => setSelectedWebcamId(e.target.value)}
+              className="w-full bg-black border border-white/20 rounded-lg p-3 text-white focus:border-white focus:outline-none"
+            >
+              {webcamDevices.map(device => (
+                <option key={device.deviceId} value={device.deviceId}>
+                  {device.label || `Camera ${device.deviceId.slice(0, 5)}...`}
+                </option>
+              ))}
+            </select>
+          </section>
 
-        // Update local mostly for responsiveness, but socket roundtrip handles truth
-        // setPermissions(prev => ({ ...prev, [toolId]: nextVal }));
-
-        // Send update
-        socket.emit('update_settings', { tool_permissions: { [toolId]: nextVal } });
-    };
-
-    const toggleFaceAuth = () => {
-        const newVal = !faceAuthEnabled;
-        setFaceAuthEnabled(newVal); // Optimistic Update
-        localStorage.setItem('face_auth_enabled', newVal);
-        socket.emit('update_settings', { face_auth_enabled: newVal });
-    };
-
-    const toggleCameraFlip = () => {
-        const newVal = !isCameraFlipped;
-        setIsCameraFlipped(newVal);
-        socket.emit('update_settings', { camera_flipped: newVal });
-    };
-
-    return (
-        <div className="absolute top-20 right-10 bg-black/90 border border-cyan-500/50 p-4 rounded-lg z-50 w-80 backdrop-blur-xl shadow-[0_0_30px_rgba(6,182,212,0.2)]">
-            <div className="flex justify-between items-center mb-4 border-b border-cyan-900/50 pb-2">
-                <h2 className="text-cyan-400 font-bold text-sm uppercase tracking-wider">{t('settings.title')}</h2>
-                <button onClick={onClose} className="text-cyan-600 hover:text-cyan-400">
-                    <X size={16} />
+          {/* Gestures */}
+          <section className="space-y-4">
+            <h3 className="text-sm font-medium text-white uppercase tracking-widest flex items-center gap-2">
+              <Hand size={16} />
+              {t('settings.gestures')}
+            </h3>
+            
+            <div className="space-y-4 bg-white/5 p-4 rounded-lg border border-white/10">
+              <div className="flex items-center justify-between">
+                <span className="text-white/80">{t('settings.mirror_vision')}</span>
+                <button
+                  onClick={() => setIsCameraFlipped(!isCameraFlipped)}
+                  className={`w-12 h-6 rounded-full transition-colors relative ${
+                    isCameraFlipped ? 'bg-white' : 'bg-white/20'
+                  }`}
+                >
+                  <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
+                    isCameraFlipped ? 'left-7' : 'left-1'
+                  }`} />
                 </button>
-            </div>
+              </div>
 
-            {/* Authentication Section */}
-            <div className="mb-6">
-                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">{t('settings.security')}</h3>
-                <div className="flex items-center justify-between text-xs bg-gray-900/50 p-2 rounded border border-cyan-900/30">
-                    <span className="text-cyan-100/80">{t('settings.face_auth')}</span>
-                    <button
-                        onClick={toggleFaceAuth}
-                        className={`relative w-8 h-4 rounded-full transition-colors duration-200 ${faceAuthEnabled ? 'bg-cyan-500/80' : 'bg-gray-700'}`}
-                    >
-                        <div
-                            className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform duration-200 ${faceAuthEnabled ? 'translate-x-4' : 'translate-x-0'}`}
-                        />
-                    </button>
-                </div>
-            </div>
-
-            {/* Microphone Section */}
-            <div className="mb-4">
-                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">{t('settings.microphone')}</h3>
-                <select
-                    value={selectedMicId}
-                    onChange={(e) => setSelectedMicId(e.target.value)}
-                    className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
-                >
-                    {micDevices.map((device, i) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                            {device.label || `Microphone ${i + 1}`}
-                        </option>
-                    ))}
-                </select>
-            </div>
-
-            {/* Speaker Section */}
-            <div className="mb-4">
-                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">{t('settings.speaker')}</h3>
-                <select
-                    value={selectedSpeakerId}
-                    onChange={(e) => setSelectedSpeakerId(e.target.value)}
-                    className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
-                >
-                    {speakerDevices.map((device, i) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                            {device.label || `Speaker ${i + 1}`}
-                        </option>
-                    ))}
-                </select>
-            </div>
-
-            {/* Webcam Section */}
-            <div className="mb-6">
-                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">{t('settings.camera')}</h3>
-                <select
-                    value={selectedWebcamId}
-                    onChange={(e) => setSelectedWebcamId(e.target.value)}
-                    className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
-                >
-                    {webcamDevices.map((device, i) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                            {device.label || `Camera ${i + 1}`}
-                        </option>
-                    ))}
-                </select>
-            </div>
-
-            {/* Cursor Section */}
-            <div className="mb-6">
-                <div className="flex justify-between mb-2">
-                    <h3 className="text-cyan-400 font-bold text-xs uppercase tracking-wider opacity-80">{t('settings.cursor')}</h3>
-                    <span className="text-xs text-cyan-500">{cursorSensitivity}x</span>
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm text-white/60">
+                  <span>{t('settings.cursor')} (Sensitivity)</span>
+                  <span>{cursorSensitivity.toFixed(1)}x</span>
                 </div>
                 <input
-                    type="range"
-                    min="1.0"
-                    max="5.0"
-                    step="0.1"
-                    value={cursorSensitivity}
-                    onChange={(e) => setCursorSensitivity(parseFloat(e.target.value))}
-                    className="w-full accent-cyan-400 cursor-pointer h-1 bg-gray-800 rounded-lg appearance-none"
+                  type="range"
+                  min="1"
+                  max="5"
+                  step="0.1"
+                  value={cursorSensitivity}
+                  onChange={(e) => setCursorSensitivity(parseFloat(e.target.value))}
+                  className="w-full accent-white h-1 bg-white/20 rounded-lg appearance-none cursor-pointer"
                 />
+              </div>
             </div>
+          </section>
 
-            {/* Gesture Control Section */}
-            <div className="mb-6">
-                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">{t('settings.gestures')}</h3>
-                <div className="flex items-center justify-between text-xs bg-gray-900/50 p-2 rounded border border-cyan-900/30">
-                    <span className="text-cyan-100/80">{t('settings.mirror_vision')}</span>
+          {/* Security / Permissions */}
+          <section className="space-y-4">
+            <h3 className="text-sm font-medium text-white uppercase tracking-widest flex items-center gap-2">
+              <Lock size={16} />
+              {t('settings.security')}
+            </h3>
+            
+            <div className="bg-white/5 p-4 rounded-lg border border-white/10 space-y-4">
+              <p className="text-xs text-white/60">{t('settings.permissions')}</p>
+              <div className="space-y-3">
+                {Object.entries(toolPermissions)
+                  .filter(([key]) => CONFIGURABLE_TOOLS.includes(key))
+                  .map(([key, val]) => (
+                  <div key={key} className="flex items-center justify-between">
+                    <span className="text-sm text-white/80 capitalize font-mono">{key.replace(/_/g, ' ')}</span>
                     <button
-                        onClick={toggleCameraFlip}
-                        className={`relative w-8 h-4 rounded-full transition-colors duration-200 ${isCameraFlipped ? 'bg-cyan-500/80' : 'bg-gray-700'}`}
+                      onClick={() => onTogglePermission && onTogglePermission(key)}
+                      className={`w-10 h-5 rounded-full transition-colors relative ${
+                        val ? 'bg-white' : 'bg-white/10'
+                      }`}
                     >
-                        <div
-                            className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform duration-200 ${isCameraFlipped ? 'translate-x-4' : 'translate-x-0'}`}
-                        />
+                      <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-transform ${
+                        val ? 'left-6' : 'left-1'
+                      }`} />
                     </button>
-                </div>
+                  </div>
+                ))}
+              </div>
             </div>
+          </section>
 
-            {/* Tool Permissions Section */}
-            <div className="mb-6">
-                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">{t('settings.permissions')}</h3>
-                <div className="space-y-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
-                    {TOOLS.map(tool => {
-                        const isRequired = permissions[tool.id] !== false; // Default True
-                        return (
-                            <div key={tool.id} className="flex items-center justify-between text-xs bg-gray-900/50 p-2 rounded border border-cyan-900/30">
-                                <span className="text-cyan-100/80">{tool.label}</span>
-                                <button
-                                    onClick={() => togglePermission(tool.id)}
-                                    className={`relative w-8 h-4 rounded-full transition-colors duration-200 ${isRequired ? 'bg-cyan-500/80' : 'bg-gray-700'}`}
-                                >
-                                    <div
-                                        className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform duration-200 ${isRequired ? 'translate-x-4' : 'translate-x-0'}`}
-                                    />
-                                </button>
-                            </div>
-                        );
-                    })}
+          {/* Memory */}
+          <section className="space-y-4">
+            <h3 className="text-sm font-medium text-white uppercase tracking-widest flex items-center gap-2">
+              <Shield size={16} />
+              {t('settings.memory')}
+            </h3>
+            
+            <div className="bg-white/5 p-4 rounded-lg border border-white/10">
+              <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-white/20 rounded-lg cursor-pointer hover:border-white/50 hover:bg-white/5 transition-all group">
+                <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                  <Upload className="w-8 h-8 mb-3 text-white/40 group-hover:text-white transition-colors" />
+                  <p className="mb-2 text-sm text-white/60 group-hover:text-white/90">
+                    <span className="font-semibold">{t('settings.import_memory')}</span>
+                  </p>
+                  <p className="text-xs text-white/40">TXT, MD, JSON</p>
                 </div>
+                <input type="file" className="hidden" onChange={handleFileUpload} accept=".txt,.md,.json" />
+              </label>
             </div>
+          </section>
 
-            {/* Memory Section */}
-            <div>
-                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">{t('settings.memory')}</h3>
-                <div className="flex flex-col gap-2">
-                    <label className="text-[10px] text-cyan-500/60 uppercase">{t('settings.import_memory')}</label>
-                    <input
-                        type="file"
-                        accept=".txt"
-                        onChange={handleFileUpload}
-                        className="text-xs text-cyan-100 bg-gray-900 border border-cyan-800 rounded p-2 file:mr-2 file:py-1 file:px-2 file:rounded-full file:border-0 file:text-[10px] file:font-semibold file:bg-cyan-900 file:text-cyan-400 hover:file:bg-cyan-800 cursor-pointer"
-                    />
-                </div>
-            </div>
-
-            {/* Language Section */}
-            <div className="mt-6 pt-4 border-t border-cyan-900/50">
-                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">{t('settings.language')}</h3>
-                <select
-                    value={language}
-                    onChange={(e) => setLanguage(e.target.value)}
-                    className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
-                >
-                    <option value="en">English</option>
-                    <option value="pl">Polski</option>
-                </select>
-            </div>
         </div>
-    );
+      </div>
+    </div>
+  );
 };
 
 export default SettingsWindow;
