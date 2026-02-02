@@ -19,6 +19,8 @@ MonikAI is a sophisticated AI conversation partner and assistant designed for mu
 | **Low-Latency Voice** | Real-time conversation with interrupt handling | Gemini 2.5 Native Audio |
 | **Screen and Camera Recognition** | Real-time screen retrieval |
 | **Long-Term Memory** | AI keeps the conversations recorded and autonomically picks up new information to remember and learn |
+| **Personality System** | Dynamic emotional state (Affection, Mood, Energy) affecting responses and visuals | `personality.py` |
+| **Proactivity** | Idle nudges and internal reasoning loops when user is silent | `proactivity.py` |
 | **Minority Report UI** | Gesture-controlled window manipulation | MediaPipe Hand Tracking |
 | **Face Authentication** | Secure local biometric login | MediaPipe Face Landmarker |
 | **Web Agent** | Autonomous browser automation | Playwright + Chromium |
@@ -32,6 +34,10 @@ MonikAI is a sophisticated AI conversation partner and assistant designed for mu
 - **Screen Recognition**: MonikAI can analyze what's currently displayed on your screen or your webcam in real-time. This allows the AI to understand your current work context and provide relevant assistance, such as explaining code, commenting on the currently played video game or suggesting improvements.
 
 - **Long-Term Memory**: MonikAI actively listens to you and records information about you (information is stored locally and never sent anywhere). This allows you to personalize your AI and grow together.
+
+- **Personality System**: MonikAI tracks her own emotional state (Affection, Mood, Energy). This isn't just a static prompt; it's a persistent system that evolves based on how you treat her, affecting her voice tone and visual appearance (sprites).
+
+- **Proactivity**: Unlike standard assistants, MonikAI has an internal thought process. If you go silent, she might "think" about the current context or gently nudge you, making her feel more like a present companion than a tool waiting for a command.
 
 - **Gesture Control**: Inspired by the movie "Minority Report", this feature lets you control windows using hand gestures detected by your webcam. It's particularly useful for hands-free operation when working on creative tasks or presentations.
 
@@ -73,6 +79,9 @@ graph TB
     subgraph Backend ["Backend (Python 3.11 + FastAPI)"]
         SERVER[server.py<br/>Socket.IO Server]
         MonikAI[monikai.py<br/>Gemini Live API]
+        PROACT[proactivity.py<br/>Idle Nudges]
+        PERS[personality.py<br/>Emotion System]
+        MEM[memory_store.py<br/>Long-Term Memory]
         WEB[web_agent.py<br/>Playwright Browser]
         KASA[kasa_agent.py<br/>Smart Home]
         AUTH[authenticator.py<br/>MediaPipe Face Auth]
@@ -82,8 +91,12 @@ graph TB
     UI --> SOCKET_C
     SOCKET_C <--> SERVER
     SERVER --> MonikAI
+    SERVER --> PERS
     MonikAI --> WEB
     MonikAI --> KASA
+    MonikAI --> PROACT
+    MonikAI --> PERS
+    MonikAI --> MEM
     SERVER --> AUTH
     SERVER --> PM
 ```
@@ -196,7 +209,7 @@ To use the secure voice features, MonikAI needs to know what you look like.
 
 1. Take a clear photo of your face (or use an existing one).
 2. Rename the file to `reference.jpg`.
-3. Drag and drop this file into the `monikai/backend` folder.
+3. Drag and drop this file into the `monikai/data` folder.
 4. (Optional) You can toggle this feature on/off in `settings.json` by changing `"face_auth_enabled": true/false`.
 
 ---
@@ -325,19 +338,26 @@ monikai/
 ├── backend/                    # Python server & AI logic
 │   ├── monikai.py              # Gemini Live API integration
 │   ├── server.py               # FastAPI + Socket.IO server
+│   ├── proactivity.py          # Idle nudges & internal reasoning
+│   ├── personality.py          # Emotional state & sprite logic
+│   ├── memory_store.py         # Long-term & working memory
 │   ├── web_agent.py            # Playwright browser automation
 │   ├── kasa_agent.py           # TP-Link smart home control
 │   ├── authenticator.py        # MediaPipe face auth logic
 │   ├── project_manager.py      # Project context management
-│   ├── tools.py                # Tool definitions for Gemini
-│   └── reference.jpg           # Your face photo (add this!)
+│   └── tools.py                # Tool definitions for Gemini
+├── data/                       # Local data storage (git-ignored)
+│   ├── user_memory/            # Long-term memory & calendar
+│   ├── projects/               # Project-specific files
+│   ├── settings.json           # User configuration
+│   ├── personality.json        # Persistent personality state
+│   └── reference.jpg           # Face auth reference image
 ├── src/                        # React frontend
 │   ├── App.jsx                 # Main application component
 │   ├── components/             # UI components (11 files)
 │   └── index.css               # Global styles
 ├── electron/                   # Electron main process
 │   └── main.js                 # Window & IPC setup
-├── projects/                   # User project data (auto-created)
 ├── .env                        # API keys (create this!)
 ├── requirements.txt            # Python dependencies
 ├── package.json                # Node.js dependencies
