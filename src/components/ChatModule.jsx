@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Paperclip, X, Maximize2, Minimize2, FileText } from "lucide-react";
-import TopAudioBar from "./TopAudioBar";
+import AudioBar from "./AudioBar";
+import { useLanguage } from '../contexts/LanguageContext';
 
 const MAX_FILES = 6;
 const MAX_FILE_BYTES = 12 * 1024 * 1024; // 12 MB per file
@@ -144,6 +145,7 @@ const ChatModule = ({
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
+  const { t } = useLanguage();
 
   const [attachments, setAttachments] = useState([]); // [{ id, file, previewUrl? }]
   const [attachError, setAttachError] = useState("");
@@ -203,12 +205,12 @@ const ChatModule = ({
 
       for (const f of incoming) {
         if (next.length >= MAX_FILES) {
-          setAttachError(`Limit załączników: max ${MAX_FILES} plików.`);
+          setAttachError(t('chat.attachment_limit', { max: MAX_FILES }));
           break;
         }
 
         if (f.size > MAX_FILE_BYTES) {
-          setAttachError(`Plik "${f.name}" jest za duży (max 12 MB).`);
+          setAttachError(t('chat.file_too_large', { name: f.name, size: 12 }));
           continue;
         }
 
@@ -233,7 +235,7 @@ const ChatModule = ({
 
       const nextTotal = next.reduce((sum, a) => sum + (a?.file?.size || 0), 0);
       if (nextTotal > MAX_TOTAL_BYTES) {
-        setAttachError("Łączny rozmiar załączników przekracza 30 MB.");
+        setAttachError(t('chat.total_size_exceeded', { size: 30 }));
         // cofamy dodawanie: zostawiamy poprzedni stan
         next.forEach((a) => a.previewUrl && URL.revokeObjectURL(a.previewUrl));
         return prev;
@@ -270,7 +272,7 @@ const ChatModule = ({
       try {
         payloadAttachments = await Promise.all(attachments.map((a) => fileToAttachmentPayload(a.file)));
       } catch {
-        setAttachError("Nie udało się przygotować załączników do wysyłki.");
+        setAttachError(t('chat.prepare_failed'));
         return;
       }
     }
@@ -386,11 +388,11 @@ const ChatModule = ({
                   ? "bg-white/[0.10] hover:bg-white/[0.14] text-white/85"
                   : "bg-white/[0.04] hover:bg-white/[0.08] text-white/70",
               ].join(" ")}
-              title={historyExpanded ? "Zwiń historię" : "Rozwiń historię"}
+              title={historyExpanded ? t('chat.collapse_history') : t('chat.expand_history')}
             >
               <span className="inline-flex items-center gap-2">
                 {historyExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                Historia
+                {t('chat.history')}
               </span>
             </button>
           </div>
@@ -475,7 +477,7 @@ const ChatModule = ({
           {/* Background Visualizer - always visible when speaking */}
           {userSpeaking && (
             <div className="absolute inset-0 flex justify-center items-center py-2 pointer-events-none opacity-60">
-              <TopAudioBar audioData={micAudioData} />
+              <AudioBar audioData={micAudioData} />
             </div>
           )}
 
@@ -486,7 +488,7 @@ const ChatModule = ({
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="Napisz do mnie…"
+              placeholder={t('chat.placeholder')}
               rows={2}
               className={[
                 "w-full resize-none",
@@ -540,10 +542,10 @@ const ChatModule = ({
 
             <div className="mt-2 flex items-center justify-between gap-3">
               <div className="text-[11px] text-white/35">
-                Shift+Enter: Nowa linia
+                {t('chat.shift_enter')}
                 {attachments.length ? (
                   <span className="ml-2 text-white/25">
-                    · Załączniki: {attachments.length}/{MAX_FILES} · {Math.round(totalAttachBytes / 1024)} KB
+                    · {t('chat.attachments')}: {attachments.length}/{MAX_FILES} · {Math.round(totalAttachBytes / 1024)} KB
                   </span>
                 ) : null}
               </div>
@@ -568,11 +570,10 @@ const ChatModule = ({
                     "transition-all",
                     "bg-white/[0.04] hover:bg-white/[0.08] text-white/70",
                   ].join(" ")}
-                  title="Dodaj załącznik"
+                  title={t('chat.attach')}
                 >
                   <span className="inline-flex items-center gap-2">
                     <Paperclip size={14} />
-                    Załącz
                   </span>
                 </button>
 
@@ -589,9 +590,9 @@ const ChatModule = ({
                       ? "bg-white/[0.08] hover:bg-white/[0.12] text-white/80"
                       : "bg-white/[0.04] text-white/30 cursor-not-allowed",
                   ].join(" ")}
-                  title={canSend ? "Wyślij" : "Wpisz wiadomość lub dodaj załącznik"}
+                  title={t('chat.send')}
                 >
-                  Wyślij
+                  {t('chat.send')}
                 </button>
               </div>
             </div>

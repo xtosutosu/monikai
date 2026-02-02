@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 
@@ -10,6 +10,12 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 let mainWindow;
 let pythonProcess;
+
+// Global error handler
+process.on('uncaughtException', (error) => {
+    dialog.showErrorBox('An Uncaught Exception was encountered', error.message);
+    app.quit();
+});
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -50,6 +56,7 @@ function createWindow() {
                     setTimeout(() => loadFrontend(retries - 1), 1000);
                 } else {
                     console.error('Failed to load frontend after all retries. Keeping window open.');
+                    dialog.showErrorBox('Frontend Error', `Failed to load the frontend after multiple retries. Please check the logs.\n${err.message}`);
                     windowWasShown = true;
                     mainWindow.show(); // Show anyway so user sees something
                 }
@@ -64,20 +71,37 @@ function createWindow() {
 }
 
 function startPythonBackend() {
-    const scriptPath = path.join(__dirname, '../backend/server.py');
-    console.log(`Starting Python backend: ${scriptPath}`);
+    return new Promise((resolve, reject) => {
+        const scriptPath = path.join(__dirname, '../backend/server.py');
+        console.log(`Starting Python backend: ${scriptPath}`);
 
-    // Assuming 'python' is in PATH. In prod, this would be the executable.
-    pythonProcess = spawn('python', [scriptPath], {
-        cwd: path.join(__dirname, '../backend'),
-    });
+        const trySpawn = (command) => {
+            const process = spawn(command, [scriptPath], {
+                cwd: path.join(__dirname, '../backend'),
+            });
 
-    pythonProcess.stdout.on('data', (data) => {
-        console.log(`[Python]: ${data}`);
-    });
+            process.stdout.on('data', (data) => {
+                console.log(`[Python]: ${data}`);
+                // Resolve the promise once the backend starts sending data
+                resolve(process);
+            });
 
-    pythonProcess.stderr.on('data', (data) => {
-        console.error(`[Python Error]: ${data}`);
+            process.stderr.on('data', (data) => {
+                console.error(`[Python Error]: ${data}`);
+            });
+
+            process.on('error', (err) => {
+                console.error(`Failed to start ${command}.`, err);
+                if (command === 'python') {
+                    console.log('Trying with python3...');
+                    trySpawn('python3');
+                } else {
+                    reject(new Error('Could not find python or python3. Please make sure Python is installed and in your PATH.'));
+                }
+            });
+        };
+
+        trySpawn('python');
     });
 }
 
@@ -105,11 +129,16 @@ app.whenReady().then(() => {
             console.log('Port 8000 is taken. Assuming backend is already running manually.');
             waitForBackend().then(createWindow);
         } else {
-            startPythonBackend();
-            // Give it a moment to start, then wait for health check
-            setTimeout(() => {
-                waitForBackend().then(createWindow);
-            }, 1000);
+            startPythonBackend()
+                .then(process => {
+                    pythonProcess = process;
+                    return waitForBackend();
+                })
+                .then(createWindow)
+                .catch(err => {
+                    dialog.showErrorBox('Backend Error', `Failed to start the backend.\n${err.message}`);
+                    app.quit();
+                });
         }
     });
 

@@ -18,6 +18,7 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
+from dataclasses import asdict
 
 
 
@@ -44,6 +45,49 @@ async def lifespan(app: FastAPI):
 
     print("[SERVER] Startup: Initializing Kasa Agent...")
     await kasa_agent.initialize()
+
+    # Initialize Global Managers (Persistent across AI sessions)
+    global calendar_manager, reminder_manager, personality_system
+    base_dir = Path(os.path.dirname(os.path.abspath(__file__)))
+    data_dir = base_dir.parent / "data"
+    user_memory_dir = data_dir / "user_memory"
+    user_memory_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Calendar
+    def on_calendar_update_server():
+        if calendar_manager:
+            events = [e.__dict__ for e in calendar_manager.get_all_events()]
+            asyncio.create_task(sio.emit('calendar_data', events))
+    
+    calendar_manager = monikai.CalendarManager(storage_dir=user_memory_dir, on_update=on_calendar_update_server)
+    calendar_manager.load()
+    print("[SERVER] Calendar Manager initialized.")
+
+    # 2. Reminders
+    async def on_reminder_fired_server(rem):
+        # Emit to UI
+        payload = {
+            "id": rem.id, "message": rem.message, "when_iso": rem.when_iso,
+            "speak": bool(rem.speak), "alert": bool(getattr(rem, "alert", True))
+        }
+        asyncio.create_task(sio.emit('reminder_fired', payload))
+        asyncio.create_task(sio.emit('reminders_list', {'reminders': _serialize_reminders()}))
+        
+        # If AI is running, let it handle speaking/logging
+        if audio_loop:
+            await audio_loop.handle_reminder_fired(rem)
+
+    reminder_manager = monikai.ReminderManager(get_time_context_fn=monikai.get_time_context, storage_dir=user_memory_dir, on_reminder=on_reminder_fired_server)
+    reminder_manager.load()
+    print("[SERVER] Reminder Manager initialized.")
+
+    # 3. Personality
+    def on_personality_update_server(state):
+        asyncio.create_task(sio.emit('personality_status', asdict(state)))
+    
+    personality_system = monikai.PersonalitySystem(storage_dir=user_memory_dir, on_update=on_personality_update_server)
+    print("[SERVER] Personality System initialized.")
+
     yield
 
 # Create a Socket.IO server
@@ -72,10 +116,16 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 # Global state
 audio_loop = None
+calendar_manager = None
+reminder_manager = None
+personality_system = None
 loop_task = None
 authenticator = None
 kasa_agent = KasaAgent()
-SETTINGS_FILE = "settings.json"
+BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = BASE_DIR.parent / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+SETTINGS_FILE = DATA_DIR / "settings.json"
 last_start_params = {}
 
 DEFAULT_SETTINGS = {
@@ -178,7 +228,7 @@ async def connect(sid, environ):
     # Initialize Authenticator if not already done
     if authenticator is None:
         authenticator = FaceAuthenticator(
-            reference_image_path="reference.jpg",
+            reference_image_path=str(DATA_DIR / "reference.jpg"),
             on_status_change=on_auth_status,
             on_frame=on_auth_frame
         )
@@ -330,6 +380,13 @@ async def start_audio(sid, data=None):
         except Exception as e:
             print(f"[SERVER] Failed to emit calendar_data: {e}")
 
+    # Callback for Personality data
+    def on_personality_update(data):
+        try:
+            asyncio.create_task(sio.emit('personality_status', data))
+        except Exception as e:
+            print(f"[SERVER] Failed to emit personality_status: {e}")
+
     def on_reminders_updated():
         try:
             asyncio.create_task(sio.emit('reminders_list', {'reminders': _serialize_reminders()}))
@@ -359,10 +416,14 @@ async def start_audio(sid, data=None):
             on_reminder_fired=on_reminder_fired,
             on_reminders_updated=on_reminders_updated,
             on_calendar_update=on_calendar_update,
+            on_personality_update=on_personality_update,
 
             input_device_index=device_index,
             input_device_name=device_name,
-            kasa_agent=kasa_agent
+            kasa_agent=kasa_agent,
+            calendar_manager=calendar_manager,
+            reminder_manager=reminder_manager,
+            personality=personality_system
             
         )
         print("[SYSTEM NOTIFICATION] AudioLoop initialized successfully.")
@@ -455,10 +516,10 @@ async def resume_audio(sid):
 
 def _serialize_reminders():
     """Return a JSON-serializable list of reminders from the active audio_loop."""
-    if not audio_loop or not getattr(audio_loop, 'reminder_manager', None):
+    if not reminder_manager:
         return []
 
-    items = audio_loop.reminder_manager.list()
+    items = reminder_manager.list()
     result = []
     for r in items:
         try:
@@ -607,18 +668,24 @@ async def list_reminders(sid, data=None):
 async def list_calendar(sid, data=None):
     """Frontend requests current calendar events."""
     events = []
-    if audio_loop and getattr(audio_loop, 'calendar_manager', None):
-        events = [e.__dict__ for e in audio_loop.calendar_manager.events.values()]
+    if calendar_manager:
+        events = [e.__dict__ for e in calendar_manager.get_all_events()]
     await sio.emit('calendar_data', events, room=sid)
 
 @sio.event
-async def delete_calendar_event(sid, data):
+async def get_personality_status(sid):
+    """Frontend requests current personality status."""
+    if personality_system:
+        await sio.emit('personality_status', asdict(personality_system.state), room=sid)
+
+@sio.event
+async def delete_event(sid, data):
     """Frontend deletes a calendar event."""
     eid = (data or {}).get('id')
     if not eid:
         return
-    if audio_loop and getattr(audio_loop, 'calendar_manager', None):
-        audio_loop.calendar_manager.delete_event(eid)
+    if calendar_manager:
+        calendar_manager.delete_event(eid)
 
 @sio.event
 async def cancel_reminder(sid, data):
@@ -628,11 +695,11 @@ async def cancel_reminder(sid, data):
         await sio.emit('error', {'msg': 'cancel_reminder: Missing id'}, room=sid)
         return
 
-    if not audio_loop or not getattr(audio_loop, 'reminder_manager', None):
-        await sio.emit('error', {'msg': 'Reminders not available (Audio Loop inactive)'}, room=sid)
+    if not reminder_manager:
+        await sio.emit('error', {'msg': 'Reminders not available'}, room=sid)
         return
 
-    ok = audio_loop.reminder_manager.cancel(rid)
+    ok = reminder_manager.cancel(rid)
     await sio.emit('reminders_list', {'reminders': _serialize_reminders()}, room=sid)
     if ok:
         await sio.emit('status', {'msg': 'Reminder cancelled'}, room=sid)
@@ -643,8 +710,8 @@ async def cancel_reminder(sid, data):
 @sio.event
 async def create_reminder(sid, data):
     """Optional: Frontend can create a reminder (same semantics as the model tool)."""
-    if not audio_loop or not getattr(audio_loop, 'reminder_manager', None):
-        await sio.emit('error', {'msg': 'Reminders not available (Audio Loop inactive)'}, room=sid)
+    if not reminder_manager:
+        await sio.emit('error', {'msg': 'Reminders not available'}, room=sid)
         return
 
     data = data or {}
@@ -660,7 +727,7 @@ async def create_reminder(sid, data):
         return
 
     try:
-        rem = audio_loop.reminder_manager.create(message=message, at=at, in_minutes=in_minutes, in_seconds=in_seconds, speak=speak, alert=alert)
+        rem = reminder_manager.create(message=message, at=at, in_minutes=in_minutes, in_seconds=in_seconds, speak=speak, alert=alert)
         await sio.emit('status', {'msg': f"Reminder created ({rem.id})"}, room=sid)
 
         # Let the model know (so it can reference it later)
@@ -683,6 +750,34 @@ Speak: {bool(rem.speak)}. Alert: {bool(getattr(rem, 'alert', True))}."
         await sio.emit('error', {'msg': f"Failed to create reminder: {e}"}, room=sid)
 
     await sio.emit('reminders_list', {'reminders': _serialize_reminders()}, room=sid)
+
+@sio.event
+async def create_event(sid, data):
+    """Frontend creates a calendar event."""
+    if not calendar_manager:
+        await sio.emit('error', {'msg': 'Calendar not available'}, room=sid)
+        return
+
+    data = data or {}
+    summary = data.get('summary')
+    start_iso = data.get('start_iso')
+    end_iso = data.get('end_iso')
+    description = data.get('description')
+
+    if not summary or not start_iso or not end_iso:
+        await sio.emit('error', {'msg': 'create_event: Missing summary, start_iso, or end_iso'}, room=sid)
+        return
+
+    try:
+        event = calendar_manager.create_event(summary=summary, start_iso=start_iso, end_iso=end_iso, description=description)
+        await sio.emit('status', {'msg': f"Event created ({event.id})"}, room=sid)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Failed to create event: {e}"}, room=sid)
+
+    # Emit update
+    if calendar_manager:
+        events = [e.__dict__ for e in calendar_manager.get_all_events()]
+        await sio.emit('calendar_data', events, room=sid)
 
 @sio.event
 async def confirm_tool(sid, data):
@@ -865,7 +960,7 @@ async def save_memory(sid, data):
             return
 
         # Ensure directory exists
-        memory_dir = Path("long_term_memory")
+        memory_dir = DATA_DIR / "long_term_memory"
         memory_dir.mkdir(exist_ok=True)
 
         # Generate filename
@@ -899,11 +994,11 @@ def _notes_path():
         if audio_loop and getattr(audio_loop, "project_manager", None):
             base = audio_loop.project_manager.get_current_project_path()
         else:
-            base = Path("projects") / "temp"
+            base = DATA_DIR / "projects" / "temp"
         base.mkdir(parents=True, exist_ok=True)
         return base / "notes.md"
     except Exception:
-        return Path("projects") / "temp" / "notes.md"
+        return DATA_DIR / "projects" / "temp" / "notes.md"
 
 def _read_notes_text():
     path = _notes_path()

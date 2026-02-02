@@ -4,9 +4,10 @@
   "description": "MonikAI - Monika + AI",
   "main": "electron/main.js",
   "scripts": {
-    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && npx electron .\"",
+    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env NODE_OPTIONS=--no-deprecation npx electron .\"",
     "build": "vite build",
-    "start": "npx electron ."
+    "start": "npx electron .",
+    "dist": "npm run build && electron-builder"
   },
   "keywords": [],
   "author": "",
@@ -28,9 +29,28 @@
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
     "electron": "^40.1.0",
+    "electron-builder": "^24.9.1",
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.1",
     "vite": "^7.3.1",
     "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.monikai.app",
+    "productName": "MonikAI",
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "backend/**/*"
+    ],
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist_electron"
+    },
+    "win": {
+      "target": "portable",
+      "icon": "build/icon.png",
+      "forceCodeSigning": false
+    }
   }
 }

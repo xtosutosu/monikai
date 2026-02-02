@@ -13,7 +13,8 @@ import KasaWindow from './components/KasaWindow';
 import SettingsWindow from './components/SettingsWindow';
 import RemindersWindow from './components/RemindersWindow';
 import NotesWindow from './components/NotesWindow';
-import CalendarWindow from './components/CalendarWindow';
+import PersonalityWindow from './components/PersonalityWindow';
+import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 
 const socket = io('http://localhost:8000');
 const { ipcRenderer } = window.require('electron');
@@ -26,11 +27,12 @@ const getDefaultPositions = () => ({
   kasa: { x: window.innerWidth / 2, y: window.innerHeight / 2 + 50 },
   reminders: { x: window.innerWidth / 2, y: window.innerHeight / 2 - 50 },
   notes: { x: window.innerWidth / 2, y: window.innerHeight / 2 },
-  calendar: { x: window.innerWidth / 2, y: window.innerHeight / 2 + 100 },
   tools: { x: window.innerWidth / 2, y: window.innerHeight - 100 }
 });
 
-function App() {
+function AppContent() {
+  const { t } = useLanguage();
+
   // ---------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------
@@ -90,7 +92,6 @@ function App() {
   const [showRemindersWindow, setShowRemindersWindow] = useState(false);
   const [showNotesWindow, setShowNotesWindow] = useState(false);
   const [showBrowserWindow, setShowBrowserWindow] = useState(false);
-  const [showCalendarWindow, setShowCalendarWindow] = useState(false);
 
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -214,6 +215,7 @@ function App() {
   const [selectedWebcamId, setSelectedWebcamId] = useState(() => localStorage.getItem('selectedWebcamId') || '');
   const [showSettings, setShowSettings] = useState(false);
   const [currentProject, setCurrentProject] = useState('default');
+  const [showPersonalityWindow, setShowPersonalityWindow] = useState(false);
 
   // ---------------------------------------------------------------------
   // Modular/Windowed State (kept for your movable windows)
@@ -231,14 +233,13 @@ function App() {
     kasa: { w: 320, h: 500 },
     reminders: { w: 420, h: 560 },
     notes: { w: 500, h: 600 },
-    calendar: { w: 420, h: 650 }
   });
 
   const [activeDragElement, setActiveDragElement] = useState(null);
 
   // Z-Index Stacking Order (last element = highest z-index)
   const [zIndexOrder, setZIndexOrder] = useState([
-    'visualizer', 'chat', 'tools', 'video', 'browser', 'kasa', 'reminders', 'notes', 'calendar'
+    'visualizer', 'chat', 'tools', 'video', 'browser', 'kasa', 'reminders', 'notes'
   ]);
 
   // ---------------------------------------------------------------------
@@ -322,7 +323,7 @@ function App() {
         ...prev,
         [windowId]: defaultPositions[windowId]
       }));
-      pushToast(`Pozycja okna '${windowId}' została zresetowana.`);
+      pushToast(t('system.window_reset', { windowId }));
     }
   };
 
@@ -477,7 +478,7 @@ function App() {
 
         console.log("Auto-connecting to model with device:", deviceName, "Index:", index);
 
-        setStatus('Connecting...');
+        setStatus(t('system.connecting'));
         socket.emit('start_audio', {
           device_index: index >= 0 ? index : null,
           device_name: deviceName,
@@ -490,13 +491,13 @@ function App() {
 
   useEffect(() => {
     socket.on('connect', () => {
-      setStatus('Connected');
+      setStatus(t('system.connected'));
       setSocketConnected(true);
       socket.emit('get_settings');
     });
 
     socket.on('disconnect', () => {
-      setStatus('Disconnected');
+      setStatus(t('system.disconnected'));
       setSocketConnected(false);
     });
 
@@ -504,14 +505,14 @@ function App() {
       let displayMsg = data.msg;
 
       // Persona translation for status messages
-      if (data.msg === 'MonikAI Started') displayMsg = "I'm fully awake and ready.";
-      else if (data.msg === 'MonikAI Stopped') displayMsg = "I'm disconnecting for a moment.";
+      if (data.msg === 'MonikAI Started') displayMsg = t('system.monikai_started');
+      else if (data.msg === 'MonikAI Stopped') displayMsg = t('system.monikai_stopped');
 
       addMessage('System', displayMsg);
       if (data.msg === 'MonikAI Started') {
-        setStatus('Model Connected');
+        setStatus(t('system.model_connected'));
       } else if (data.msg === 'MonikAI Stopped') {
-        setStatus('Connected');
+        setStatus(t('system.connected'));
       }
     });
 
@@ -556,7 +557,7 @@ function App() {
 
     socket.on('error', (data) => {
       console.error("Socket Error:", data);
-      addMessage('System', `Something feels off... (${data.msg})`);
+      addMessage('System', `Something feels off... (${data.msg})`); // Keeping generic fallback for now or use t() if msg is known
     });
 
     socket.on('browser_frame', (data) => {
@@ -637,7 +638,7 @@ function App() {
     socket.on('project_update', (data) => {
       console.log("Project Update:", data.project);
       setCurrentProject(data.project);
-      addMessage('System', `I'm now focusing on project: ${data.project}`);
+      addMessage('System', t('system.project_focus', { project: data.project }));
     });
 
     navigator.mediaDevices.enumerateDevices().then(devs => {
@@ -693,10 +694,10 @@ function App() {
           numHands: 1
         });
 
-        addMessage('System', 'I can see your hand gestures now.');
+        addMessage('System', t('system.hand_tracking_active'));
       } catch (error) {
         console.error("Failed to initialize HandLandmarker:", error);
-        addMessage('System', `I'm having trouble tracking your hands: ${error.message}`);
+        addMessage('System', t('system.hand_tracking_error', { error: error.message }));
       }
     };
     initHandLandmarker();
@@ -731,7 +732,7 @@ function App() {
   // Initial check in case we are already connected (fix race condition)
   useEffect(() => {
     if (socket.connected) {
-      setStatus('Connected');
+      setStatus(t('system.connected'));
       socket.emit('get_settings');
     }
   }, []);
@@ -835,7 +836,7 @@ function App() {
 
     } catch (err) {
       console.error("Error accessing camera:", err);
-      addMessage('System', "I'm having trouble accessing the camera.");
+      addMessage('System', t('system.camera_error'));
     }
   };
 
@@ -1018,7 +1019,7 @@ function App() {
 
         if (isFist) {
           if (!activeDragElementRef.current) {
-            const draggableElements = ['browser', 'kasa', 'reminders', 'notes', 'calendar'];
+            const draggableElements = ['browser', 'kasa', 'reminders', 'notes'];
 
             for (const id of draggableElements) {
               const el = document.getElementById(id);
@@ -1177,11 +1178,11 @@ const handleSend = (e) => {
 
     const attachLine = names
       ? `\n\n[Załączniki: ${names}${attachments.length > 8 ? ', …' : ''}]`
-      : `\n\n[Załączniki: ${attachments.length}]`;
+      : `\n\n[${t('chat.attachments')}: ${attachments.length}]`;
 
-    addMessage('Ty', (text || '(wysłano załączniki)') + attachLine);
+    addMessage(t('chat.you'), (text || `(${t('chat.sent_attachments')})`) + attachLine);
   } else {
-    addMessage('Ty', text);
+    addMessage(t('chat.you'), text);
   }
 
   setInputValue('');
@@ -1216,13 +1217,13 @@ const handleSend = (e) => {
         const textContent = event.target.result;
         if (typeof textContent === 'string' && textContent.length > 0) {
           socket.emit('upload_memory', { memory: textContent });
-          addMessage('System', 'Reading that file into my memory...');
+          addMessage('System', t('system.reading_memory'));
         } else {
-          addMessage('System', 'That file seems empty or invalid.');
+          addMessage('System', t('system.memory_empty'));
         }
       } catch (err) {
         console.error("Error reading file:", err);
-        addMessage('System', 'I had trouble reading that memory file.');
+        addMessage('System', t('system.memory_error'));
       }
     };
     reader.readAsText(file);
@@ -1364,6 +1365,8 @@ const handleSend = (e) => {
         />
       )}
 
+      {showPersonalityWindow && <PersonalityWindow socket={socket} />}
+
       {/* VN FULLSCREEN BACKGROUND + CHARACTER (behind UI) */}
       <div className="fixed inset-0 z-0 pointer-events-none">
         <Visualizer
@@ -1373,7 +1376,7 @@ const handleSend = (e) => {
           height={viewport.h}
           backgroundSrc={vnBackground}
           sprites={{
-            idle: "/vn/ai_idle.png",
+            idle: isConnected ? "/vn/ai_idle.png" : "/vn/ai_sleeping.png",
             listen: "/vn/ai_listen.png",
             talk: ["/vn/ai_talk_1.png", "/vn/ai_talk_2.png"],
           }}
@@ -1385,6 +1388,9 @@ const handleSend = (e) => {
         {/* Subtle VN vignette */}
         <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/55" />
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-15 mix-blend-overlay" />
+
+        {/* Sleep Dimmer */}
+        <div className={`absolute inset-0 bg-black/60 transition-opacity duration-[2000ms] ${isConnected ? 'opacity-0' : 'opacity-100'}`} />
       </div>
 
       {/* Hand Cursor - Only show if tracking is enabled */}
@@ -1412,7 +1418,12 @@ const handleSend = (e) => {
         style={{ WebkitAppRegion: 'drag' }}
       >
         <div className="flex items-center gap-4 pl-2">
-          <h1 className="text-xl font-semibold tracking-[0.1em] text-white/70 drop-shadow-[0_0_10px_rgba(255,255,255,0.18)]">
+          <h1 
+            className="text-xl font-semibold tracking-[0.1em] text-white/70 drop-shadow-[0_0_10px_rgba(255,255,255,0.18)] cursor-help hover:text-white/90 transition-colors"
+            onMouseEnter={() => setShowPersonalityWindow(true)}
+            onMouseLeave={() => setShowPersonalityWindow(false)}
+            style={{ WebkitAppRegion: 'no-drag' }}
+          >
             Monik.AI
           </h1>
 
@@ -1616,6 +1627,7 @@ const handleSend = (e) => {
           onMouseDown={() => {}}
           userSpeaking={userSpeaking}
           micAudioData={micAudioData}
+          zIndex={10}
         />
 
         {/* Footer Controls / Tools Module */}
@@ -1641,8 +1653,6 @@ const handleSend = (e) => {
             showKasaWindow={showKasaWindow}
             onToggleBrowser={() => handleToggleWindow('browser', showBrowserWindow, setShowBrowserWindow)}
             showBrowserWindow={showBrowserWindow}
-            onToggleCalendar={() => handleToggleWindow('calendar', showCalendarWindow, setShowCalendarWindow)}
-            showCalendarWindow={showCalendarWindow}
             onResetPosition={handleResetPosition}
             activeDragElement={activeDragElement}
             position={elementPositions.tools}
@@ -1721,19 +1731,6 @@ const handleSend = (e) => {
           </div>
         )}
 
-        {/* Calendar Window */}
-        {showCalendarWindow && (
-          <CalendarWindow
-            socket={socket}
-            isVisible={showCalendarWindow}
-            onClose={() => setShowCalendarWindow(false)}
-            position={elementPositions.calendar}
-            onMouseDown={(e) => handleMouseDown(e, 'calendar')}
-            activeDragElement={activeDragElement}
-            zIndex={getZIndex('calendar')}
-          />
-        )}
-
         {/* Tool Confirmation Modal */}
         <ConfirmationPopup
           request={confirmationRequest}
@@ -1742,6 +1739,14 @@ const handleSend = (e) => {
         />
       </div>
     </div>
+  );
+}
+
+function App() {
+  return (
+    <LanguageProvider>
+      <AppContent />
+    </LanguageProvider>
   );
 }
 

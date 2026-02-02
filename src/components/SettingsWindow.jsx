@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
+import { useLanguage } from '../contexts/LanguageContext';
 
 const TOOLS = [
     { id: 'create_reminder', label: 'Create Reminder' },
@@ -47,6 +48,7 @@ const SettingsWindow = ({
 }) => {
     const [permissions, setPermissions] = useState({});
     const [faceAuthEnabled, setFaceAuthEnabled] = useState(false);
+    const { language, setLanguage, t } = useLanguage();
 
     useEffect(() => {
         // Request initial permissions
@@ -100,7 +102,7 @@ const SettingsWindow = ({
     return (
         <div className="absolute top-20 right-10 bg-black/90 border border-cyan-500/50 p-4 rounded-lg z-50 w-80 backdrop-blur-xl shadow-[0_0_30px_rgba(6,182,212,0.2)]">
             <div className="flex justify-between items-center mb-4 border-b border-cyan-900/50 pb-2">
-                <h2 className="text-cyan-400 font-bold text-sm uppercase tracking-wider">OUR SETTINGS</h2>
+                <h2 className="text-cyan-400 font-bold text-sm uppercase tracking-wider">{t('settings.title')}</h2>
                 <button onClick={onClose} className="text-cyan-600 hover:text-cyan-400">
                     <X size={16} />
                 </button>
@@ -108,9 +110,9 @@ const SettingsWindow = ({
 
             {/* Authentication Section */}
             <div className="mb-6">
-                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">SECURITY</h3>
+                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">{t('settings.security')}</h3>
                 <div className="flex items-center justify-between text-xs bg-gray-900/50 p-2 rounded border border-cyan-900/30">
-                    <span className="text-cyan-100/80">Face Recognition</span>
+                    <span className="text-cyan-100/80">{t('settings.face_auth')}</span>
                     <button
                         onClick={toggleFaceAuth}
                         className={`relative w-8 h-4 rounded-full transition-colors duration-200 ${faceAuthEnabled ? 'bg-cyan-500/80' : 'bg-gray-700'}`}
@@ -124,7 +126,7 @@ const SettingsWindow = ({
 
             {/* Microphone Section */}
             <div className="mb-4">
-                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">MY HEARING (MICROPHONE)</h3>
+                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">{t('settings.microphone')}</h3>
                 <select
                     value={selectedMicId}
                     onChange={(e) => setSelectedMicId(e.target.value)}
@@ -140,7 +142,7 @@ const SettingsWindow = ({
 
             {/* Speaker Section */}
             <div className="mb-4">
-                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">MY VOICE (SPEAKER)</h3>
+                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">{t('settings.speaker')}</h3>
                 <select
                     value={selectedSpeakerId}
                     onChange={(e) => setSelectedSpeakerId(e.target.value)}
@@ -156,7 +158,7 @@ const SettingsWindow = ({
 
             {/* Webcam Section */}
             <div className="mb-6">
-                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">MY SIGHT (CAMERA)</h3>
+                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">{t('settings.camera')}</h3>
                 <select
                     value={selectedWebcamId}
                     onChange={(e) => setSelectedWebcamId(e.target.value)}
@@ -173,7 +175,7 @@ const SettingsWindow = ({
             {/* Cursor Section */}
             <div className="mb-6">
                 <div className="flex justify-between mb-2">
-                    <h3 className="text-cyan-400 font-bold text-xs uppercase tracking-wider opacity-80">CURSOR CONTROL</h3>
+                    <h3 className="text-cyan-400 font-bold text-xs uppercase tracking-wider opacity-80">{t('settings.cursor')}</h3>
                     <span className="text-xs text-cyan-500">{cursorSensitivity}x</span>
                 </div>
                 <input
@@ -189,9 +191,9 @@ const SettingsWindow = ({
 
             {/* Gesture Control Section */}
             <div className="mb-6">
-                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">GESTURES</h3>
+                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">{t('settings.gestures')}</h3>
                 <div className="flex items-center justify-between text-xs bg-gray-900/50 p-2 rounded border border-cyan-900/30">
-                    <span className="text-cyan-100/80">Mirror Vision</span>
+                    <span className="text-cyan-100/80">{t('settings.mirror_vision')}</span>
                     <button
                         onClick={toggleCameraFlip}
                         className={`relative w-8 h-4 rounded-full transition-colors duration-200 ${isCameraFlipped ? 'bg-cyan-500/80' : 'bg-gray-700'}`}
@@ -205,7 +207,7 @@ const SettingsWindow = ({
 
             {/* Tool Permissions Section */}
             <div className="mb-6">
-                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">SHOULD I ASK FOR PERMISSION FOR...</h3>
+                <h3 className="text-cyan-400 font-bold mb-3 text-xs uppercase tracking-wider opacity-80">{t('settings.permissions')}</h3>
                 <div className="space-y-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
                     {TOOLS.map(tool => {
                         const isRequired = permissions[tool.id] !== false; // Default True
@@ -228,9 +230,9 @@ const SettingsWindow = ({
 
             {/* Memory Section */}
             <div>
-                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">MEMORY MANAGEMENT</h3>
+                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">{t('settings.memory')}</h3>
                 <div className="flex flex-col gap-2">
-                    <label className="text-[10px] text-cyan-500/60 uppercase">Import a File for Me to Remember</label>
+                    <label className="text-[10px] text-cyan-500/60 uppercase">{t('settings.import_memory')}</label>
                     <input
                         type="file"
                         accept=".txt"
@@ -238,6 +240,19 @@ const SettingsWindow = ({
                         className="text-xs text-cyan-100 bg-gray-900 border border-cyan-800 rounded p-2 file:mr-2 file:py-1 file:px-2 file:rounded-full file:border-0 file:text-[10px] file:font-semibold file:bg-cyan-900 file:text-cyan-400 hover:file:bg-cyan-800 cursor-pointer"
                     />
                 </div>
+            </div>
+
+            {/* Language Section */}
+            <div className="mt-6 pt-4 border-t border-cyan-900/50">
+                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">{t('settings.language')}</h3>
+                <select
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value)}
+                    className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                >
+                    <option value="en">English</option>
+                    <option value="pl">Polski</option>
+                </select>
             </div>
         </div>
     );

@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Clock, Trash2, RefreshCw, Bell, Timer, Plus, Volume2, CalendarDays, ChevronLeft, ChevronRight, LayoutList } from 'lucide-react';
+import { X, Clock, Trash2, RefreshCw, Bell, Timer, Plus, Volume2, CalendarDays, ChevronLeft, ChevronRight, LayoutList, CalendarCheck, CalendarPlus } from 'lucide-react';
 import dayjs from 'dayjs';
 import 'dayjs/locale/pl';
 import localizedFormat from 'dayjs/plugin/localizedFormat';
 import isSameOrBefore from 'dayjs/plugin/isSameOrBefore';
 import isSameOrAfter from 'dayjs/plugin/isSameOrAfter';
+import { useLanguage } from '../contexts/LanguageContext';
 
 dayjs.extend(localizedFormat);
 dayjs.extend(isSameOrBefore);
@@ -23,13 +24,14 @@ const RemindersWindow = ({
     const [reminders, setReminders] = useState([]); // [{ id, message, when_iso, speak, alert, when_epoch_ms }]
     const [events, setEvents] = useState([]); // [{ id, summary, start_iso, end_iso, description }]
     const [isLoading, setIsLoading] = useState(false);
+    const { t } = useLanguage();
 
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'month'
     const [currentDate, setCurrentDate] = useState(dayjs());
     const [selectedDate, setSelectedDate] = useState(dayjs());
 
     // Create UI
-    const [createTab, setCreateTab] = useState('reminder'); // 'reminder' | 'timer'
+    const [createTab, setCreateTab] = useState('reminder'); // 'reminder' | 'timer' | 'event'
     const [message, setMessage] = useState('');
     const [dateTimeLocal, setDateTimeLocal] = useState(''); // yyyy-mm-ddThh:mm
     const [inMinutes, setInMinutes] = useState('');
@@ -38,6 +40,9 @@ const RemindersWindow = ({
     const [timerS, setTimerS] = useState('0');
     const [speak, setSpeak] = useState(true);
     const [alert, setAlert] = useState(true);
+    const [eventStart, setEventStart] = useState('');
+    const [eventEnd, setEventEnd] = useState('');
+    const [eventDesc, setEventDesc] = useState('');
     const [submitErr, setSubmitErr] = useState('');
 
     // Fired alert UI
@@ -186,18 +191,18 @@ const RemindersWindow = ({
         
         // Process reminders
         for (const r of reminders) {
-            const d = new Date(r.when_iso);
-            const key = isNaN(d.getTime()) ? (r.when_iso || 'Unknown') : d.toISOString().slice(0, 10);
+            const d = dayjs(r.when_iso);
+            const key = d.isValid() ? d.format('YYYY-MM-DD') : (r.when_iso || 'Unknown');
             if (!groups[key]) groups[key] = [];
-            groups[key].push({ ...r, _type: 'reminder', _ts: d.getTime() });
+            groups[key].push({ ...r, _type: 'reminder', _ts: d.valueOf() });
         }
 
         // Process calendar events
         for (const e of events) {
-            const d = new Date(e.start_iso);
-            const key = isNaN(d.getTime()) ? (e.start_iso || 'Unknown') : d.toISOString().slice(0, 10);
+            const d = dayjs(e.start_iso);
+            const key = d.isValid() ? d.format('YYYY-MM-DD') : (e.start_iso || 'Unknown');
             if (!groups[key]) groups[key] = [];
-            groups[key].push({ ...e, _type: 'event', _ts: d.getTime() });
+            groups[key].push({ ...e, _type: 'event', _ts: d.valueOf() });
         }
 
         for (const key of Object.keys(groups)) {
@@ -230,9 +235,10 @@ const RemindersWindow = ({
         const startOfTarget = new Date(target.getFullYear(), target.getMonth(), target.getDate()).getTime();
         const diffDays = Math.round((startOfTarget - startOfToday) / (24 * 60 * 60 * 1000));
 
-        if (diffDays === 0) return 'Today';
-        if (diffDays === 1) return 'Tomorrow';
-        return yyyyMmDd;
+        if (diffDays === 0) return t('schedule.today');
+        if (diffDays === 1) return t('schedule.tomorrow');
+        const d = dayjs(yyyyMmDd);
+        return d.isValid() ? d.format('dddd, D MMMM') : yyyyMmDd;
     };
 
     const formatTime = (whenIso) => {
@@ -265,16 +271,48 @@ const RemindersWindow = ({
         setTimerS('0');
     };
 
+    const handleJumpToToday = () => {
+        const today = dayjs();
+        if (viewMode === 'month') {
+            setCurrentDate(today);
+            setSelectedDate(today);
+        } else {
+            const todayKey = today.format('YYYY-MM-DD');
+            // Find today or the next upcoming date group
+            const targetKey = grouped.keys.find(k => k >= todayKey);
+            if (targetKey) {
+                const el = document.getElementById(`schedule-group-${targetKey}`);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+    };
+
     const submit = () => {
         if (!socket) return;
         setSubmitErr('');
 
         const msg = (message || '').trim();
         if (!msg) {
-            setSubmitErr('Message is required.');
+            setSubmitErr(t('schedule.msg_required'));
             return;
         }
-
+        
+        if (createTab === 'event') {
+            if (!eventStart || !eventEnd) {
+                setSubmitErr(t('schedule.times_required'));
+                return;
+            }
+            if (dayjs(eventEnd).isBefore(dayjs(eventStart))) {
+                setSubmitErr(t('schedule.end_after_start'));
+                return;
+            }
+            socket.emit('create_event', {
+                summary: msg,
+                start_iso: eventStart,
+                end_iso: eventEnd,
+                description: eventDesc
+            });
+        } else {
         const payload = { message: msg, speak: !!speak, alert: !!alert };
 
         if (createTab === 'reminder') {
@@ -286,12 +324,12 @@ const RemindersWindow = ({
             } else if (mins) {
                 const n = Number(mins);
                 if (!Number.isFinite(n) || n <= 0) {
-                    setSubmitErr('in-minutes must be a positive number.');
+                    setSubmitErr(t('schedule.positive_minutes'));
                     return;
                 }
                 payload.in_minutes = Math.round(n);
             } else {
-                setSubmitErr('Set a date/time or in-minutes.');
+                setSubmitErr(t('schedule.set_datetime_or_minutes'));
                 return;
             }
         } else {
@@ -300,17 +338,21 @@ const RemindersWindow = ({
             const s = Math.max(0, Math.floor(Number(timerS) || 0));
             const total = (h * 3600) + (m * 60) + s;
             if (!Number.isFinite(total) || total <= 0) {
-                setSubmitErr('Timer duration must be > 0.');
+                setSubmitErr(t('schedule.timer_positive'));
                 return;
             }
             payload.in_seconds = total;
         }
 
         socket.emit('create_reminder', payload);
+        }
 
         // Reset lighter
         setInMinutes('');
         setDateTimeLocal('');
+        setEventStart('');
+        setEventEnd('');
+        setEventDesc('');
         if (createTab === 'timer') {
             setTimerH('0');
             setTimerM('10');
@@ -343,7 +385,7 @@ const RemindersWindow = ({
             <div data-drag-handle className="flex items-center justify-between pb-2 border-b border-white/10 cursor-grab active:cursor-grabbing">
                 <div className="flex items-center gap-2">
                     <CalendarDays size={16} className="text-white-400" />
-                    <span className="text-xs font-bold tracking-widest text-white-100 uppercase">Schedule</span>
+                    <span className="text-xs font-bold tracking-widest text-white-100 uppercase">{t('schedule.title')}</span>
                 </div>
                 
                 <div className="flex bg-white/5 rounded-lg p-0.5 border border-white/10">
@@ -365,17 +407,24 @@ const RemindersWindow = ({
 
                 <div className="flex items-center gap-2">
                     <button
+                        onClick={handleJumpToToday}
+                        className="p-1.5 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-colors"
+                        title={t('schedule.jump_today')}
+                    >
+                        <CalendarCheck size={14} />
+                    </button>
+                    <button
                         onClick={requestList}
                         disabled={isLoading}
                         className={`p-1.5 hover:bg-white/10 rounded-full transition-colors ${isLoading ? 'animate-spin text-white-400' : 'text-gray-400 hover:text-white-400'}`}
-                        title="Refresh"
+                        title={t('schedule.refresh')}
                     >
                         <RefreshCw size={14} />
                     </button>
                     <button
                         onClick={onClose}
                         className="p-1.5 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-colors"
-                        title="Close"
+                        title={t('schedule.close')}
                     >
                         <X size={14} />
                     </button>
@@ -387,7 +436,7 @@ const RemindersWindow = ({
                 <div className="p-3 rounded-lg border border-white/10 bg-white/5">
                     <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                            <div className="text-xs font-bold tracking-widest text-white/60 uppercase">Alarm</div>
+                            <div className="text-xs font-bold tracking-widest text-white/60 uppercase">{t('schedule.alarm')}</div>
                             <div className="mt-1 text-sm text-white break-words">{fired.message}</div>
                             <div className="mt-1 text-[12px] text-white/30">{fired.when_iso}</div>
                         </div>
@@ -395,9 +444,9 @@ const RemindersWindow = ({
                             <button
                                 onClick={() => { stopBeep(); setFired(null); }}
                                 className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs text-white/80"
-                                title="Dismiss"
+                                title={t('schedule.dismiss')}
                             >
-                                Dismiss
+                                {t('schedule.dismiss')}
                             </button>
                         </div>
                     </div>
@@ -413,22 +462,29 @@ const RemindersWindow = ({
                     <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 text-xs font-bold tracking-widest text-white/70 uppercase">
                             <Plus size={14} className="text-white/50" />
-                            Add
+                            {t('schedule.add')}
                         </div>
                         <div className="flex items-center gap-2">
                             <button
                                 onClick={() => setCreateTab('reminder')}
                                 className={`px-2.5 py-1 rounded-lg text-xs transition-colors ${createTab === 'reminder' ? 'bg-white/15 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}
-                                title="Reminder"
+                                title={t('schedule.reminder')}
                             >
-                                <span className="inline-flex items-center gap-1"><Bell size={12} /> Reminder</span>
+                                <span className="inline-flex items-center gap-1"><Bell size={12} /> {t('schedule.reminder')}</span>
                             </button>
                             <button
                                 onClick={() => setCreateTab('timer')}
                                 className={`px-2.5 py-1 rounded-lg text-xs transition-colors ${createTab === 'timer' ? 'bg-white/15 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}
-                                title="Timer"
+                                title={t('schedule.timer')}
                             >
-                                <span className="inline-flex items-center gap-1"><Timer size={12} /> Timer</span>
+                                <span className="inline-flex items-center gap-1"><Timer size={12} /> {t('schedule.timer')}</span>
+                            </button>
+                            <button
+                                onClick={() => setCreateTab('event')}
+                                className={`px-2.5 py-1 rounded-lg text-xs transition-colors ${createTab === 'event' ? 'bg-white/15 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}
+                                title={t('schedule.event')}
+                            >
+                                <span className="inline-flex items-center gap-1"><CalendarPlus size={12} /> {t('schedule.event')}</span>
                             </button>
                         </div>
                     </div>
@@ -437,14 +493,14 @@ const RemindersWindow = ({
                         <input
                             value={message}
                             onChange={(e) => setMessage(e.target.value)}
-                            placeholder={createTab === 'timer' ? 'Timer label (e.g., "Tea")' : 'Reminder message'}
+                            placeholder={createTab === 'timer' ? 'Timer label (e.g., "Tea")' : (createTab === 'event' ? 'Event Summary' : t('schedule.msg_required'))}
                             className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white text-sm outline-none focus:border-white/25"
                         />
 
                         {createTab === 'reminder' ? (
                             <div className="grid grid-cols-2 gap-2">
                                 <div className="space-y-1">
-                                    <div className="text-[10px] text-white/40 uppercase tracking-wider">Date/Time</div>
+                                    <div className="text-[10px] text-white/40 uppercase tracking-wider">{t('schedule.datetime')}</div>
                                     <input
                                         type="datetime-local"
                                         value={dateTimeLocal}
@@ -453,7 +509,7 @@ const RemindersWindow = ({
                                     />
                                 </div>
                                 <div className="space-y-1">
-                                    <div className="text-[10px] text-white/40 uppercase tracking-wider">In minutes</div>
+                                    <div className="text-[10px] text-white/40 uppercase tracking-wider">{t('schedule.in_minutes')}</div>
                                     <input
                                         value={inMinutes}
                                         onChange={(e) => setInMinutes(e.target.value)}
@@ -462,20 +518,20 @@ const RemindersWindow = ({
                                     />
                                 </div>
                                 <div className="col-span-2 text-[11px] text-white/25">
-                                    Tip: set one of them (date/time takes priority).
+                                    {t('schedule.tip_priority')}
                                 </div>
                             </div>
-                        ) : (
+                        ) : createTab === 'timer' ? (
                             <div className="space-y-2">
                                 <div className="flex items-center justify-between">
-                                    <div className="text-[10px] text-white/40 uppercase tracking-wider">Duration</div>
+                                    <div className="text-[10px] text-white/40 uppercase tracking-wider">{t('schedule.duration')}</div>
                                     <div className="flex items-center gap-1">
                                         {[5, 10, 15, 30, 60].map((m) => (
                                             <button
                                                 key={m}
                                                 onClick={() => quickTimer(m)}
                                                 className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[11px] text-white/55"
-                                                title={`${m} minutes`}
+                                                title={`${m} ${t('schedule.minutes')}`}
                                             >
                                                 {m}m
                                             </button>
@@ -489,7 +545,7 @@ const RemindersWindow = ({
                                             onChange={(e) => setTimerH(e.target.value)}
                                             className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white text-xs outline-none focus:border-white/25"
                                         />
-                                        <div className="mt-1 text-[10px] text-white/30">hours</div>
+                                        <div className="mt-1 text-[10px] text-white/30">{t('schedule.hours')}</div>
                                     </div>
                                     <div>
                                         <input
@@ -497,7 +553,7 @@ const RemindersWindow = ({
                                             onChange={(e) => setTimerM(e.target.value)}
                                             className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white text-xs outline-none focus:border-white/25"
                                         />
-                                        <div className="mt-1 text-[10px] text-white/30">minutes</div>
+                                        <div className="mt-1 text-[10px] text-white/30">{t('schedule.minutes')}</div>
                                     </div>
                                     <div>
                                         <input
@@ -505,36 +561,70 @@ const RemindersWindow = ({
                                             onChange={(e) => setTimerS(e.target.value)}
                                             className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white text-xs outline-none focus:border-white/25"
                                         />
-                                        <div className="mt-1 text-[10px] text-white/30">seconds</div>
+                                        <div className="mt-1 text-[10px] text-white/30">{t('schedule.seconds')}</div>
                                     </div>
                                 </div>
                             </div>
+                        ) : (
+                            // Event Tab
+                            <div className="space-y-2">
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="space-y-1">
+                                        <div className="text-[10px] text-white/40 uppercase tracking-wider">{t('schedule.start')}</div>
+                                        <input
+                                            type="datetime-local"
+                                            value={eventStart}
+                                            onChange={(e) => setEventStart(e.target.value)}
+                                            className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white text-xs outline-none focus:border-white/25"
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <div className="text-[10px] text-white/40 uppercase tracking-wider">{t('schedule.end')}</div>
+                                        <input
+                                            type="datetime-local"
+                                            value={eventEnd}
+                                            onChange={(e) => setEventEnd(e.target.value)}
+                                            className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white text-xs outline-none focus:border-white/25"
+                                        />
+                                    </div>
+                                </div>
+                                <input
+                                    value={eventDesc}
+                                    onChange={(e) => setEventDesc(e.target.value)}
+                                    placeholder={t('schedule.description')}
+                                    className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white text-xs outline-none focus:border-white/25"
+                                />
+                            </div>
                         )}
 
-                        <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center justify-between gap-2 pt-1">
+                            {createTab !== 'event' ? (
                             <div className="flex items-center gap-3">
                                 <button
                                     onClick={() => setSpeak(v => !v)}
                                     className={`px-2.5 py-1.5 rounded-lg text-xs transition-colors ${speak ? 'bg-white/10 text-white/80' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
-                                    title="Speak"
+                                    title={t('schedule.speak')}
                                 >
-                                    <span className="inline-flex items-center gap-1"><Volume2 size={12} /> {speak ? 'spoken' : 'silent'}</span>
+                                    <span className="inline-flex items-center gap-1"><Volume2 size={12} /> {speak ? t('schedule.spoken') : t('schedule.silent')}</span>
                                 </button>
                                 <button
                                     onClick={() => setAlert(v => !v)}
                                     className={`px-2.5 py-1.5 rounded-lg text-xs transition-colors ${alert ? 'bg-white/10 text-white/80' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
-                                    title="Ring / Notification"
+                                    title={t('schedule.ring')}
                                 >
-                                    <span className="inline-flex items-center gap-1"><Bell size={12} /> {alert ? 'alert' : 'no alert'}</span>
+                                    <span className="inline-flex items-center gap-1"><Bell size={12} /> {alert ? t('schedule.alert') : t('schedule.no_alert')}</span>
                                 </button>
                             </div>
+                            ) : (
+                                <div></div> // Spacer
+                            )}
 
                             <button
                                 onClick={submit}
                                 className="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/25 text-xs text-white/90 border border-cyan-500/30"
-                                title="Create"
+                                title={t('schedule.create')}
                             >
-                                Create
+                                {t('schedule.create')}
                             </button>
                         </div>
 
@@ -610,38 +700,42 @@ const RemindersWindow = ({
                         {(grouped.groups[selectedDate.format('YYYY-MM-DD')] || []).length > 0 ? (
                             (grouped.groups[selectedDate.format('YYYY-MM-DD')] || []).map(r => renderItem(r))
                         ) : (
-                            <div className="text-center py-4 text-white/20 text-xs italic">No items for this day.</div>
+                            <div className="text-center py-4 text-white/20 text-xs italic">{t('schedule.no_items_day')}</div>
                         )}
                     </div>
                 ) : (
                     // List View: Show all items grouped
-                    reminders.length === 0 && events.length === 0 ? (
+                    reminders.length === 0 ? (
                     <div className="text-center py-10 text-white/30 text-xs">
                         {isLoading ? (
                             <div className="flex flex-col items-center gap-2">
                                 <RefreshCw className="animate-spin" size={20} />
-                                <span>Loading schedule...</span>
+                                <span>{t('schedule.loading')}</span>
                             </div>
                         ) : (
                             <div className="space-y-2">
-                                <div>No items scheduled.</div>
-                                <div className="text-[16px] text-white/20">Create one above or by talking with your AI.</div>
+                                <div>{t('schedule.no_items')}</div>
+                                <div className="text-[16px] text-white/20">{t('schedule.create_hint')}</div>
                             </div>
                         )}
                     </div>
                 ) : (
                     <div className="space-y-4">
-                        {grouped.keys.map((dateKey) => (
-                            <div key={dateKey} className="space-y-2">
-                                <div className="text-[16px] uppercase text-white/40 font-bold tracking-wider">
-                                    {formatGroupHeader(dateKey)}
-                                </div>
+                        {grouped.keys.map((dateKey) => {
+                            const dayItems = grouped.groups[dateKey].filter(r => r._type === 'reminder');
+                            if (dayItems.length === 0) return null;
 
-                                <div className="space-y-2">
-                                    {grouped.groups[dateKey].map((r) => renderItem(r))}
+                            return (
+                                <div key={dateKey} id={`schedule-group-${dateKey}`} className="space-y-2">
+                                    <div className="text-[16px] uppercase text-white/40 font-bold tracking-wider">
+                                        {formatGroupHeader(dateKey)}
+                                    </div>
+                                    <div className="space-y-2">
+                                        {dayItems.map((r) => renderItem(r))}
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 ))}
             </div>
@@ -649,6 +743,12 @@ const RemindersWindow = ({
     );
 
     function renderItem(r) {
+        const isWholeDay = r._type === 'event' && (() => {
+            const s = dayjs(r.start_iso);
+            const e = dayjs(r.end_iso);
+            return s.hour() === 0 && s.minute() === 0 && e.hour() === 0 && e.minute() === 0 && e.diff(s, 'hour') >= 24;
+        })();
+
         return (
             <div
                 key={r.id}
@@ -661,26 +761,26 @@ const RemindersWindow = ({
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${r._type === 'event' ? 'bg-indigo-500/20 text-indigo-200' : 'bg-white/5 text-white-200/80'}`}>
                                 {r._type === 'reminder' 
                                     ? formatTime(r.when_iso) 
-                                    : `${formatTime(r.start_iso)} - ${formatTime(r.end_iso)}`
+                                    : (isWholeDay ? 'All Day' : `${formatTime(r.start_iso)} - ${formatTime(r.end_iso)}`)
                                 }
                             </span>
                             
                             {r._type === 'reminder' ? (
                                 <>
                                     {r.speak ? (
-                                        <span className="text-[10px] text-white-400/70">spoken</span>
+                                        <span className="text-[10px] text-white-400/70">{t('schedule.spoken')}</span>
                                     ) : (
-                                        <span className="text-[10px] text-white/30">silent</span>
+                                        <span className="text-[10px] text-white/30">{t('schedule.silent')}</span>
                                     )}
                                     {r.alert === false ? (
-                                        <span className="text-[10px] text-white/30">no alert</span>
+                                        <span className="text-[10px] text-white/30">{t('schedule.no_alert')}</span>
                                     ) : (
-                                        <span className="text-[10px] text-white-400/70">alert</span>
+                                        <span className="text-[10px] text-white-400/70">{t('schedule.alert')}</span>
                                     )}
                                 </>
                             ) : (
                                 <span className="text-[10px] text-indigo-300/50 flex items-center gap-1">
-                                    <CalendarDays size={10} /> event
+                                    <CalendarDays size={10} /> {t('schedule.event_label')}
                                 </span>
                             )}
                         </div>
@@ -697,7 +797,17 @@ const RemindersWindow = ({
                     </button>
                 </div>
 
-                <div className="mt-2 text-[12px] text-white/20 truncate">{r._type === 'reminder' ? r.when_iso : `${r.start_iso} -> ${r.end_iso}`}</div>
+                <div className="mt-2 text-[12px] text-white/20 truncate">
+                    {r._type === 'reminder' 
+                        ? dayjs(r.when_iso).format('D MMMM YYYY, HH:mm') 
+                        : (isWholeDay 
+                            ? (dayjs(r.end_iso).diff(dayjs(r.start_iso), 'day') === 1 
+                                ? dayjs(r.start_iso).format('D MMMM YYYY') 
+                                : `${dayjs(r.start_iso).format('D MMMM')} - ${dayjs(r.end_iso).subtract(1, 'day').format('D MMMM YYYY')}`)
+                            : `${dayjs(r.start_iso).format('D MMMM, HH:mm')} - ${dayjs(r.end_iso).format(dayjs(r.start_iso).isSame(r.end_iso, 'day') ? 'HH:mm' : 'D MMMM, HH:mm')}`
+                          )
+                    }
+                </div>
             </div>
         );
     }
