@@ -5,6 +5,7 @@ import { useLanguage } from '../contexts/LanguageContext';
 const PersonalityWindow = ({ socket }) => {
     const [state, setState] = useState({
         affection: 0.0,
+        affection_hearts: '',
         mood: 'neutral',
         energy: 0.8,
         cycle_day: 1,
@@ -61,7 +62,9 @@ const PersonalityWindow = ({ socket }) => {
                         </div>
                         <span className="text-xs font-medium tracking-wide">{t('personality.affection')}</span>
                     </div>
-                    <span className="text-sm font-bold text-pink-300 font-mono">{state.affection.toFixed(1)}</span>
+                    <span className="text-[10px] font-bold text-pink-300 font-mono tracking-tighter">
+                        {state.affection_hearts || state.affection.toFixed(1)}
+                    </span>
                 </div>
 
                 {/* Mood */}

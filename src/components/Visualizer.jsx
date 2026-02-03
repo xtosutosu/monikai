@@ -19,6 +19,7 @@ const Visualizer = ({
   isAssistantSpeaking,
 
   sprites = null,
+  layers = null, // New: Array of image paths for layered rendering (MAS style)
 
   characterScale = 1.0,
   characterY = 10,
@@ -157,7 +158,19 @@ const Visualizer = ({
           transition={{ duration: 0.35 }}
           style={{ scale: characterScale, willChange: "transform, opacity" }}
         >
-          {characterSrc && !charBroken ? (
+          {layers && layers.length > 0 ? (
+            <div className="relative w-[960px] h-[960px] flex items-center justify-center">
+              {layers.map((layerSrc, i) => (
+                <img
+                  key={i}
+                  src={layerSrc}
+                  className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
+                  alt=""
+                  onError={(e) => { e.target.style.display = 'none'; }}
+                />
+              ))}
+            </div>
+          ) : characterSrc && !charBroken ? (
             <img
               src={characterSrc}
               alt=""

@@ -19,6 +19,11 @@ class PersonalityState:
     phase: str = "Low Energy, Calm"
     weather: str = "Unknown"
     last_weather_ts: float = 0.0
+    last_energy_reset_day: int = 0
+    last_dream: Optional[str] = None
+    dream_told: bool = False
+    current_location: str = "room"
+    current_outfit: str = "School Uniform"
 
 class PersonalitySystem:
     def __init__(self, storage_dir: Path, on_update: Optional[Callable[[PersonalityState], None]] = None):
@@ -98,7 +103,7 @@ class PersonalitySystem:
 
     def get_cycle_phase(self) -> str:
         day = self.state.cycle_day
-        if 1 <= day <= 5: return "Low Energy, Calm"
+        if 1 <= day <= 5: return "Lower Energy, Calm"
         if 6 <= day <= 13: return "Rising Energy, Creative"
         if 14 <= day <= 16: return "Peak Energy, Social, Flirty"
         return "Calm -> Irritable/Tired"
@@ -122,6 +127,35 @@ class PersonalitySystem:
             if self.on_update:
                 self.on_update(self.state)
         return self.state
+
+    def daily_energy_reset(self) -> bool:
+        """Checks if energy should be reset (after 6am, once per day)."""
+        now = datetime.now()
+        # Check if it's after 6 AM and we haven't reset today
+        if now.hour >= 6 and now.day != self.state.last_energy_reset_day:
+            print("[Personality] Daily energy reset triggered.")
+            self.state.last_energy_reset_day = now.day
+            
+            # Mood based on affection (Long-term memory)
+            aff = self.state.affection
+            new_mood = "calm"
+            if aff > 80: new_mood = "love"
+            elif aff > 40: new_mood = "happy"
+            elif aff < -20: new_mood = "sad"
+            
+            # Energy regeneration influenced by state
+            # Generally high (regenerated), but stress (low affection) takes a toll
+            new_energy = 1.0
+            if aff < 0: new_energy = 0.85
+            elif aff < 30: new_energy = 0.95
+
+            self.update(energy=new_energy, mood=new_mood)
+            
+            # Reset dream state for the new day
+            self.state.last_dream = None
+            self.state.dream_told = False
+            return True
+        return False
 
     def update_weather(self, force: bool = False):
         now = time.time()
@@ -171,10 +205,19 @@ class PersonalitySystem:
     def get_context_prompt(self) -> str:
         phase = self.get_cycle_phase()
         self._recalc_effective_energy() # Ensure energy is fresh based on time
+        
+        # Affection hearts logic (0-100 -> 0-10 scale)
+        aff = max(0.0, min(100.0, self.state.affection))
+        score = aff / 10.0
+        full = int(score)
+        hearts = "❤️" * full + "🤍" * (10 - full)
+        
         return (
             f"**Real Data:**\n"
-            f"- Affection: {self.state.affection:.1f}\n"
+            f"- Affection: {hearts} ({score:.1f}/10)\n"
             f"- Cycle Day {self.state.cycle_day}/{self.state.current_cycle_length} ({phase})\n"
-            f"- Mood: {self.state.mood}, Energy: {self.state.energy:.2f}\n"
+            f"- Mood: {self.state.mood}, Energy: {int(self.state.energy * 100)}%\n"
             f"- Weather: {self.state.weather}\n"
+            f"- Current Location: {self.state.current_location}\n"
+            f"- Current Outfit: {self.state.current_outfit}\n"
         )

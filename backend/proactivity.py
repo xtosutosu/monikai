@@ -121,7 +121,7 @@ class ProactivityManager:
             self._nudge_timestamps.popleft()
         return len(self._nudge_timestamps)
 
-    def should_nudge(self, *, is_user_speaking: bool, is_paused: bool) -> bool:
+    def should_nudge(self, *, is_user_speaking: bool, is_paused: bool, threshold_override: Optional[float] = None) -> bool:
         if not self.cfg.enabled:
             return False
         if is_paused:
@@ -130,9 +130,13 @@ class ProactivityManager:
             return False
 
         now = time.time()
+        
+        threshold = self.cfg.threshold_sec
+        if threshold_override is not None:
+            threshold = threshold_override
 
         # user must be quiet long enough
-        if (now - self._last_user_activity_ts) < self.cfg.threshold_sec:
+        if (now - self._last_user_activity_ts) < threshold:
             return False
 
         # cooldown between nudges
@@ -185,7 +189,7 @@ class ProactivityManager:
         
         return None
 
-    def get_nudge_message(self, mood: Optional[str] = None) -> str:
+    def get_nudge_message(self, mood: Optional[str] = None, video_mode: str = "none") -> str:
         """
         Generates a persona-aware prompt for the idle nudge.
         """
@@ -198,18 +202,30 @@ class ProactivityManager:
             "Express that you missed hearing their voice.",
             "Ask if they are tired or need a break."
         ]
+
+        if video_mode == "screen":
+            strategies = [
+                "Comment on what is currently visible on the screen.",
+                "Ask about the work or activity shown on the screen.",
+                "Offer help or observations based on the screen content."
+            ] + strategies
+
         strategy = random.choice(strategies)
         
         mood_instr = ""
         if mood and mood.lower() != "neutral":
             mood_instr = f" Your current mood is '{mood}', so reflect that emotion."
 
+        screen_instr = ""
+        if video_mode == "screen":
+            screen_instr = " You are currently seeing the user's screen. If appropriate, comment on what is visible."
+
         prompt = (
             "System Notification: [Proactivity] The user has been silent for a while. "
             "Check the recent context: if the user asked for silence, is working, or sleeping, DO NOT speak. "
             "Only break the silence if it feels natural and appropriate. "
             f"If you speak, try this approach: {strategy}\n"
-            f"Keep it personal, warm, short, and 'Monika-like' (maybe a soft 'ahaha' or '~').{mood_instr} "
+            f"Keep it personal, warm, short, and 'Monika-like' (maybe a soft 'ahaha' or '~').{mood_instr}{screen_instr} "
             "Do not sound like a generic AI assistant. Keep the message brief."
         )
         

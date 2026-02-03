@@ -126,6 +126,14 @@ async def lifespan(app: FastAPI):
     def on_personality_update_server(state):
         data = asdict(state)
         data["sprite"] = _determine_sprite(data)
+        
+        # Calculate hearts for UI display
+        aff = max(0.0, min(100.0, float(data.get("affection", 0))))
+        score = aff / 10.0
+        full = int(score)
+        hearts = "❤️" * full + "🤍" * (10 - full)
+        data["affection_hearts"] = f"{hearts} ({score:.1f}/10)"
+        
         asyncio.create_task(sio.emit('personality_status', data))
     
     personality_system = monikai.PersonalitySystem(storage_dir=user_memory_dir, on_update=on_personality_update_server)
@@ -195,8 +203,8 @@ DEFAULT_SETTINGS = {
     },
     "screen_capture": { # backend screen capture (if enabled)
         "fps": 6.0,
-        "max_size": 1920,
-        "jpeg_quality": 85,
+        "max_size": 1280,
+        "jpeg_quality": 70,
         "monitor": 1,
         "format": "jpeg",
         "region": None,
@@ -205,16 +213,16 @@ DEFAULT_SETTINGS = {
     "proactivity": {
         "idle_nudges": {
             "enabled": True,
-           "threshold_sec": 180,
-            "cooldown_sec": 300,
-            "min_ai_quiet_sec": 10,
-            "max_per_session": 6,
-            "max_per_hour": 12,
+           "threshold_sec": 900,
+            "cooldown_sec": 1800,
+            "min_ai_quiet_sec": 60,
+            "max_per_session": 3,
+            "max_per_hour": 5,
             "topic_memory_size": 6
         },
         "reasoning": {
             "enabled": True,
-            "interval_sec": 10.0
+            "interval_sec": 120.0
         }
     }
 }
@@ -1391,6 +1399,26 @@ async def update_settings(sid, data):
 @sio.event
 async def get_tool_permissions(sid):
     await sio.emit('tool_permissions', SETTINGS["tool_permissions"])
+
+@sio.event
+async def report_visual_state(sid, data):
+    """Frontend reports current visual state (location/outfit) for AI context."""
+    if personality_system:
+        loc = data.get("location")
+        outfit = data.get("outfit")
+        
+        changed = False
+        if loc and loc != personality_system.state.current_location:
+            personality_system.state.current_location = loc
+            changed = True
+        if outfit and outfit != personality_system.state.current_outfit:
+            personality_system.state.current_outfit = outfit
+            changed = True
+            
+        if changed and audio_loop and getattr(audio_loop, "session", None):
+            update_msg = f"System Notification: [Visual State Update] Current Location: {personality_system.state.current_location}, Current Outfit: {personality_system.state.current_outfit}."
+            print(f"[SERVER] Sending visual update to model: {update_msg}")
+            await audio_loop.session.send(input=update_msg, end_of_turn=False)
 
 @sio.event
 async def update_tool_permissions(sid, data):

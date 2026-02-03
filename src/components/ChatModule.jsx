@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Paperclip, X, Maximize2, Minimize2, MessageSquare, Send, Brain } from "lucide-react";
+import { Paperclip, X, Maximize2, Minimize2, MessageSquare, Send, Brain, Minus, ChevronUp } from "lucide-react";
 import AudioBar from "./AudioBar";
 import { useLanguage } from '../contexts/LanguageContext';
 
@@ -150,6 +150,7 @@ const ChatModule = ({
   const [attachments, setAttachments] = useState([]); // [{ id, file, previewUrl? }]
   const [attachError, setAttachError] = useState("");
   const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
   const [showThoughts, setShowThoughts] = useState(false);
 
   useEffect(() => {
@@ -341,11 +342,10 @@ const ChatModule = ({
     return Math.min(maxH, 980);
   }, [baseHeight]);
 
-  const effectiveHeight = historyExpanded ? expandedHeight : baseHeight;
+  const effectiveHeight = isMinimized ? 60 : (historyExpanded ? expandedHeight : baseHeight);
   const baseTop = position?.y ?? 200;
   const deltaH = effectiveHeight - baseHeight;
-  const topWhenExpanded = Math.max(14, baseTop - deltaH);
-  const effectiveTop = historyExpanded ? topWhenExpanded : baseTop;
+  const effectiveTop = Math.max(14, baseTop - deltaH);
 
   return (
     <div
@@ -385,17 +385,29 @@ const ChatModule = ({
             </button>
             <button
               type="button"
-              onClick={() => setHistoryExpanded((v) => !v)}
+              onClick={() => {
+                setHistoryExpanded((v) => !v);
+                setIsMinimized(false);
+              }}
               className={`p-1.5 rounded-lg transition-colors ${historyExpanded ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white hover:bg-white/10'}`}
               title={historyExpanded ? t('chat.collapse_history') : t('chat.expand_history')}
             >
               {historyExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
             </button>
+            <button
+              type="button"
+              onClick={() => setIsMinimized((v) => !v)}
+              className={`p-1.5 rounded-lg transition-colors ${isMinimized ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white hover:bg-white/10'}`}
+              title={isMinimized ? (t('chat.restore') || "Restore") : (t('chat.minimize') || "Minimize")}
+            >
+              {isMinimized ? <ChevronUp size={16} /> : <Minus size={16} />}
+            </button>
         </div>
       </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4 relative bg-black/20">
+      {!isMinimized && (
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4 relative bg-black/20">
             {visibleMessages.map((msg, i) => {
               const sender = String(msg?.sender || "");
               const lower = sender.toLowerCase();
@@ -430,10 +442,12 @@ const ChatModule = ({
               );
             })}
             <div ref={messagesEndRef} />
-      </div>
+        </div>
+      )}
 
       {/* Input Area */}
-      <div className="p-4 border-t border-white/10 bg-white/5 relative shrink-0">
+      {!isMinimized && (
+        <div className="p-4 border-t border-white/10 bg-white/5 relative shrink-0">
           {/* Background Visualizer - always visible when speaking */}
           {userSpeaking && (
             <div className="absolute inset-0 flex justify-center items-center opacity-20 pointer-events-none">
@@ -541,7 +555,8 @@ const ChatModule = ({
               </div>
             </div>
           </div>
-      </div>
+        </div>
+      )}
     </div>
   );
 };

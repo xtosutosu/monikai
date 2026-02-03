@@ -166,6 +166,10 @@ class CalendarManager:
         self.storage_dir = storage_dir
         self.on_update = on_update
         self.events: Dict[str, CalendarEvent] = {}
+        self.user_birthday: Optional[tuple[int, int]] = None
+
+    def set_user_birthday(self, month: int, day: int):
+        self.user_birthday = (month, day)
 
     def _save(self):
         data = [e.__dict__ for e in self.events.values()]
@@ -231,6 +235,18 @@ class CalendarManager:
             except: pass
 
         for year in range(start_year, end_year + 1):
+            # Inject Birthday
+            if self.user_birthday:
+                bm, bd = self.user_birthday
+                try:
+                    b_start = datetime(year, bm, bd, 0, 0, 0, tzinfo=tz)
+                    if start_range <= b_start < end_range:
+                        results.append(CalendarEvent(
+                            id=f"birthday-{year}", summary="User's Birthday",
+                            start_iso=b_start.isoformat(), end_iso=(b_start + timedelta(days=1)).isoformat(), description="Happy Birthday!"
+                        ))
+                except ValueError: pass
+
             for (month, day), name in all_holidays.items():
                 try:
                     h_start = datetime(year, month, day, 0, 0, 0, tzinfo=tz)
@@ -265,6 +281,17 @@ class CalendarManager:
             except: pass
 
         for year in years:
+            # Inject Birthday
+            if self.user_birthday:
+                bm, bd = self.user_birthday
+                try:
+                    h_start = datetime(year, bm, bd, 0, 0, 0).astimezone()
+                    results.append(CalendarEvent(
+                        id=f"birthday-{year}", summary="User's Birthday",
+                        start_iso=h_start.isoformat(), end_iso=(h_start + timedelta(days=1)).isoformat(), description="Happy Birthday!"
+                    ))
+                except ValueError: pass
+
             for (month, day), name in all_holidays.items():
                 try:
                     h_start = datetime(year, month, day, 0, 0, 0).astimezone()
@@ -294,6 +321,16 @@ class CalendarManager:
             except Exception:
                 pass
         
+        # Check for birthday today
+        if self.user_birthday:
+            bm, bd = self.user_birthday
+            if now.month == bm and now.day == bd:
+                start_dt = datetime(now.year, now.month, now.day, 0, 0, 0).astimezone()
+                todays_events.append(CalendarEvent(
+                    id=f"birthday-today", summary="User's Birthday",
+                    start_iso=start_dt.isoformat(), end_iso=(start_dt + timedelta(days=1)).isoformat(), description="Happy Birthday!"
+                ))
+
         # Check for holiday today
         holiday_name = get_holiday_context()
         if holiday_name:
@@ -1004,6 +1041,12 @@ class AudioLoop:
             self.memory_store = None
             print(f"[AI DEBUG] [MEMORY] Failed to initialize MemoryStore: {e}")
 
+        # Sync birthday to calendar if available
+        if self.memory_store and self.calendar_manager:
+            bd = self.memory_store.get_birthday()
+            if bd:
+                self.calendar_manager.set_user_birthday(*bd)
+
         # Initialize PersonalitySystem
         if personality:
             self.personality = personality
@@ -1281,9 +1324,15 @@ class AudioLoop:
             if not self.session:
                 continue
 
+            # Dynamic threshold for screen mode (react faster if watching screen)
+            threshold = None
+            if self.video_mode == "screen":
+                threshold = 60.0  # 1 minute
+
             should = self.proactivity.should_nudge(
                 is_user_speaking=self._is_speaking,
-                is_paused=self.paused
+                is_paused=self.paused,
+                threshold_override=threshold
             )
             if not should:
                 continue
@@ -1291,7 +1340,7 @@ class AudioLoop:
             mood = None
             if self.personality:
                 mood = self.personality.state.mood
-            msg = self.proactivity.get_nudge_message(mood=mood)
+            msg = self.proactivity.get_nudge_message(mood=mood, video_mode=self.video_mode)
 
             try:
                 await self.session.send(input=msg, end_of_turn=True)
@@ -1300,9 +1349,68 @@ class AudioLoop:
             except Exception as e:
                 print(f"[AI DEBUG] [NUDGE] Failed to send idle nudge: {e}")
 
+    async def generate_daily_dream(self):
+        """Generates a dream based on recent conversation history."""
+        if not self.project_manager:
+            return
+
+        print("[AI] Generating daily dream...")
+        history = self.project_manager.get_recent_chat_history(limit=30)
+        
+        context_text = ""
+        if history:
+            context_text = "\n".join([f"{h.get('sender', 'Unknown')}: {h.get('text', '')}" for h in history])
+
+        prompt = (
+            "Based on the following recent conversation history with the user, generate a short (1-2 sentences) "
+            "dream that Monika might have had last night. The dream should be first-person, slightly metaphorical, "
+            "surreal, or emotional, reflecting her bond with the user or topics discussed.\n"
+            "Output ONLY the dream text.\n\n"
+            f"Conversation Context:\n{context_text}"
+        )
+
+        try:
+            # Use a lightweight model for this generation task
+            response = await client.aio.models.generate_content(
+                model="gemini-2.0-flash", 
+                contents=prompt
+            )
+            dream_text = response.text.strip()
+            self.personality.state.last_dream = dream_text
+            self.personality.save()
+            print(f"[AI] Dream generated: {dream_text}")
+            
+            # If we are currently connected and it's morning, tell it immediately
+            if self.session:
+                now = datetime.now()
+                if 6 <= now.hour < 12:
+                    msg = f"System Notification: [Morning Routine] You just woke up. Your dream was: '{dream_text}'. Share it with the user naturally as a morning greeting."
+                    await self.session.send(input=msg, end_of_turn=True)
+                    self.personality.state.dream_told = True
+                    self.personality.save()
+
+        except Exception as e:
+            print(f"[AI] Failed to generate dream: {e}")
+
     async def reasoning_loop(self):
         while not self.stop_event.is_set():
             await asyncio.sleep(1.0)
+
+            if self.personality:
+                # This will check if it's after 6am and reset energy once per day.
+                if self.personality.daily_energy_reset():
+                    # If reset happened, generate a new dream
+                    asyncio.create_task(self.generate_daily_dream())
+                    
+                    # Check for birthday on new day
+                    if self.memory_store:
+                        bd = self.memory_store.get_birthday()
+                        if bd:
+                            now = datetime.now()
+                            if now.month == bd[0] and now.day == bd[1]:
+                                # Trigger a birthday greeting
+                                asyncio.create_task(self.session.send(input="System Notification: [Date Event] It is the user's birthday today! Wish them a happy birthday now.", end_of_turn=True))
+
             prompt = await self.proactivity.run_reasoning_check()
             if prompt and self.session:
                 print(f"[AI DEBUG] [REASONING] Triggering internal thought.")
@@ -1364,7 +1472,7 @@ class AudioLoop:
             return False
         if min_age_sec and (time.time() - self._latest_image_ts) < min_age_sec:
             return False
-        frame = await asyncio.to_thread(self._grab_screen)
+        frame, _ = await asyncio.to_thread(self._grab_screen)
         if frame is None:
             return False
         await self._enqueue_frame(frame)
@@ -2270,6 +2378,7 @@ class AudioLoop:
 
                 # Convert BGRA to BGR for JPEG/PNG encoding
                 img_bgr = cv2.cvtColor(img_np, cv2.COLOR_BGRA2BGR)
+                img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
                 fmt = self.screen_capture.get("format", "jpeg")
                 ext = ".png" if fmt == "png" else ".jpg"
@@ -2285,33 +2394,55 @@ class AudioLoop:
 
                 ret, buf = cv2.imencode(ext, img_bgr, params)
                 if ret:
-                    return {"mime_type": mime, "data": buf.tobytes()}
-                return None
+                    return {"mime_type": mime, "data": buf.tobytes()}, img_gray
+                return None, None
 
         except Exception as e:
             now = time.time()
             if (now - self._last_screen_error_ts) > 3.0:
                 self._last_screen_error_ts = now
                 print(f"[AI DEBUG] [SCREEN] Capture error: {e}")
-            return None
+            return None, None
 
     async def get_screen(self):
+        last_gray = None
+        idle_interval = 2.0  # Slow down to 0.5 FPS when static
+        current_interval = self._screen_interval
+
         while True:
             if self.paused or self.video_mode != "screen":
                 await asyncio.sleep(0.2)
                 continue
 
-            frame = await asyncio.to_thread(self._grab_screen)
+            start_ts = time.time()
+            frame, gray = await asyncio.to_thread(self._grab_screen)
+            
             if frame is not None:
                 self._screen_fail_count = 0
                 await self._enqueue_frame(frame)
+
+                # Dynamic FPS: Check for motion
+                active_interval = self._screen_interval
+                if last_gray is not None and gray is not None and last_gray.shape == gray.shape:
+                    score = np.mean(cv2.absdiff(last_gray, gray))
+                    if score > 0.5:  # Threshold for activity
+                        current_interval = active_interval
+                    else:
+                        # Exponential backoff to idle
+                        current_interval = min(current_interval * 1.5, idle_interval)
+                else:
+                    current_interval = active_interval
+                
+                last_gray = gray
             else:
                 self._screen_fail_count += 1
                 if self._screen_fail_count >= 10:
                     self._screen_fail_count = 0
                     if self.on_error:
                         self.on_error("Screen capture failed (no frames). Check monitor index or permissions.")
-            await asyncio.sleep(self._screen_interval)
+            
+            elapsed = time.time() - start_ts
+            await asyncio.sleep(max(0.01, current_interval - elapsed))
 
     async def run(self, start_message=None):
         retry_delay = 1
@@ -2341,7 +2472,7 @@ class AudioLoop:
                     self.session = session
 
                     self.audio_in_queue = asyncio.Queue()
-                    self.out_queue = asyncio.Queue(maxsize=10)
+                    self.out_queue = asyncio.Queue(maxsize=100)
 
                     tg.create_task(self.send_realtime())
                     tg.create_task(self.listen_audio())
@@ -2371,6 +2502,14 @@ class AudioLoop:
                         if holiday:
                             special_context.append(f"Today is {holiday}!")
                         
+                        # Check User Birthday
+                        if self.memory_store:
+                            bd = self.memory_store.get_birthday()
+                            if bd:
+                                now = datetime.now()
+                                if now.month == bd[0] and now.day == bd[1]:
+                                    special_context.append("🎉 IMPORTANT: TODAY IS THE USER'S BIRTHDAY! 🎉 Wish them a happy birthday immediately and warmly!")
+
                         todays_events = self.calendar_manager.get_todays_events()
                         for e in todays_events:
                             special_context.append(f"Calendar Event Today: {e.summary}")
@@ -2388,6 +2527,15 @@ class AudioLoop:
                                 ),
                                 end_of_turn=False,
                             )
+                        
+                        # Check for pending dream (if app started in the morning but dream was generated earlier/persisted)
+                        if self.personality and self.personality.state.last_dream and not self.personality.state.dream_told:
+                            now = datetime.now()
+                            if 6 <= now.hour < 12:
+                                msg = f"System Notification: [Morning Routine] You have a memory of a dream from last night: '{self.personality.state.last_dream}'. Since it is morning, tell the user about it."
+                                await self.session.send(input=msg, end_of_turn=True)
+                                self.personality.state.dream_told = True
+                                self.personality.save()
 
                         if start_message:
                             print(f"[AI DEBUG] [INFO] Sending start message: {start_message}")

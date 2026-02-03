@@ -256,6 +256,29 @@ class MemoryStore:
         canonical_json = json.dumps(profile, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
+    def get_birthday(self) -> Optional[tuple[int, int]]:
+        """Returns (month, day) if birthday is known, else None."""
+        profile = self._load_work()
+        dob = profile.get("date_of_birth") or profile.get("birthday")
+        
+        if not dob:
+            return None
+            
+        try:
+            # Handle "YYYY-MM-DD" or "MM-DD" string
+            if isinstance(dob, str):
+                parts = dob.replace('/', '-').split("-")
+                if len(parts) == 3: # YYYY-MM-DD
+                    return (int(parts[1]), int(parts[2]))
+                elif len(parts) == 2: # MM-DD
+                    return (int(parts[0]), int(parts[1]))
+            # Handle dict {"month": 2, "day": 4}
+            elif isinstance(dob, dict):
+                return (int(dob.get("month")), int(dob.get("day")))
+        except Exception:
+            pass
+        return None
+
     # ----------------------------------------------------------------------------------
     # Public API used by monikai.py
     # ----------------------------------------------------------------------------------

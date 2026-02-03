@@ -16,6 +16,7 @@ import NotesWindow from './components/NotesWindow';
 import PersonalityWindow from './components/PersonalityWindow';
 import CameraWindow from './components/CameraWindow';
 import ScreenWindow from './components/ScreenWindow';
+import CompanionWindow from './components/CompanionWindow';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 
 const socket = io('http://localhost:8000');
@@ -30,7 +31,8 @@ const getDefaultPositions = () => ({
   kasa: { x: window.innerWidth - 620, y: 310 },
   reminders: { x: window.innerWidth - 230, y: 340 },
   notes: { x: 270, y: 360 },
-  tools: { x: window.innerWidth / 2, y: window.innerHeight - 115 }
+  tools: { x: window.innerWidth / 2, y: window.innerHeight - 115 },
+  companion: { x: window.innerWidth / 2, y: window.innerHeight / 2 }
 });
 
 function AppContent() {
@@ -95,6 +97,7 @@ function AppContent() {
   const [showRemindersWindow, setShowRemindersWindow] = useState(false);
   const [showNotesWindow, setShowNotesWindow] = useState(false);
   const [showBrowserWindow, setShowBrowserWindow] = useState(false);
+  const [showCompanionWindow, setShowCompanionWindow] = useState(false);
 
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -102,10 +105,10 @@ function AppContent() {
   // VN Scene / Background (dynamic)
   // ---------------------------------------------------------------------
   const VN_BACKGROUNDS = {
-    room: "/vn/bg_room.png",
-    kitchen: "/vn/bg_kitchen.png",
-    outside: "/vn/bg_outside.png",
-    school: "/vn/bg_school.png",
+    room: "/vn/location/bg_room.png",
+    kitchen: "/vn/location/bg_kitchen.png",
+    outside: "/vn/location/bg_outside.png",
+    school: "/vn/location/bg_school.png",
   };
 
   const [vnScene, setVnScene] = useState("room");
@@ -199,6 +202,7 @@ function AppContent() {
   const [currentProject, setCurrentProject] = useState('default');
   const [showPersonalityWindow, setShowPersonalityWindow] = useState(false);
   const [toolPermissions, setToolPermissions] = useState({});
+  const [personalityState, setPersonalityState] = useState({ mood: 'neutral', affection: 0 });
 
   // ---------------------------------------------------------------------
   // Modular/Windowed State (kept for your movable windows)
@@ -217,13 +221,14 @@ function AppContent() {
     kasa: { w: 320, h: 500 },
     reminders: { w: 420, h: 560 },
     notes: { w: 500, h: 600 },
+    companion: { w: 400, h: 500 },
   });
 
   const [activeDragElement, setActiveDragElement] = useState(null);
 
   // Z-Index Stacking Order (last element = highest z-index)
   const [zIndexOrder, setZIndexOrder] = useState([
-    'visualizer', 'chat', 'tools', 'video', 'screen', 'browser', 'kasa', 'reminders', 'notes'
+    'visualizer', 'chat', 'tools', 'video', 'screen', 'browser', 'kasa', 'reminders', 'notes', 'companion'
   ]);
 
   // ---------------------------------------------------------------------
@@ -370,7 +375,8 @@ function AppContent() {
   // Live Clock Update
   useEffect(() => {
     const timer = setInterval(() => {
-      setCurrentTime(new Date());
+      const now = new Date();
+      setCurrentTime(now);
     }, 1000);
     return () => clearInterval(timer);
   }, []);
@@ -394,6 +400,357 @@ function AppContent() {
     setVnScene(initialScene);
     setVnBackground(VN_BACKGROUNDS[initialScene] || VN_BACKGROUNDS.room);
   }, []);
+
+  // ---------------------------------------------------------------------
+  // Blinking Logic
+  // ---------------------------------------------------------------------
+  const [isBlinking, setIsBlinking] = useState(false);
+  useEffect(() => {
+    let timeout;
+    const triggerBlink = () => {
+      setIsBlinking(true);
+      setTimeout(() => setIsBlinking(false), 150); // Blink duration
+      timeout = setTimeout(triggerBlink, Math.random() * 3000 + 3000); // Random interval 3-6s
+    };
+    timeout = setTimeout(triggerBlink, 3000);
+    return () => clearTimeout(timeout);
+  }, []);
+
+  // ---------------------------------------------------------------------
+  // Random Glance Logic
+  // ---------------------------------------------------------------------
+  const [randomGlance, setRandomGlance] = useState(null);
+  useEffect(() => {
+    let timeout;
+    const triggerGlance = () => {
+      const roll = Math.random();
+      if (roll < 0.3) {
+        setRandomGlance('left');
+        setTimeout(() => setRandomGlance(null), Math.random() * 1000 + 800);
+      } else if (roll < 0.6) {
+        setRandomGlance('right');
+        setTimeout(() => setRandomGlance(null), Math.random() * 1000 + 800);
+      }
+      timeout = setTimeout(triggerGlance, Math.random() * 5000 + 4000);
+    };
+    timeout = setTimeout(triggerGlance, 5000);
+    return () => clearTimeout(timeout);
+  }, []);
+
+  // ---------------------------------------------------------------------
+  // Random Pose Logic (Fidgeting)
+  // ---------------------------------------------------------------------
+  const [randomPose, setRandomPose] = useState(null); // null, 'crossed', 'point', 'steepling'
+  
+  // Refs to access latest state in timeout without resetting it
+  const aiSpeakingRef = useRef(aiSpeaking);
+  useEffect(() => { aiSpeakingRef.current = aiSpeaking; }, [aiSpeaking]);
+
+  useEffect(() => {
+    let timeout;
+    const triggerPose = () => {
+      const isSpeaking = aiSpeakingRef.current;
+      const roll = Math.random();
+
+      if (isSpeaking) {
+        // Active talking gestures (prioritize restpoint)
+        if (roll < 0.50) {
+          setRandomPose('restpoint');
+          setTimeout(() => setRandomPose(null), Math.random() * 3000 + 3000);
+        } else if (roll < 0.70) {
+          setRandomPose('point');
+          setTimeout(() => setRandomPose(null), Math.random() * 2000 + 2000);
+        } else {
+          setRandomPose(null);
+        }
+        timeout = setTimeout(triggerPose, Math.random() * 3000 + 2000);
+      } else {
+        // Idle fidgeting
+        if (roll < 0.20) {
+          setRandomPose('crossed');
+          setTimeout(() => setRandomPose(null), Math.random() * 5000 + 5000);
+        } else if (roll < 0.90) {
+          setRandomPose('steepling');
+          setTimeout(() => setRandomPose(null), Math.random() * 5000 + 5000);
+        } else {
+          setRandomPose(null);
+        }
+        timeout = setTimeout(triggerPose, Math.random() * 5000 + 5000);
+      }
+    };
+    timeout = setTimeout(triggerPose, 2000);
+    return () => clearTimeout(timeout);
+  }, []);
+
+  // ---------------------------------------------------------------------
+  // MAS Layer Logic (Monika After Story Assets)
+  // ---------------------------------------------------------------------
+  const currentHour = currentTime.getHours();
+  const currentMonth = currentTime.getMonth(); // 0-11
+  const currentDay = currentTime.getDate();
+
+  // Calculate Outfit State (Folder, Hair, Name)
+  const visualState = useMemo(() => {
+    const mood = (personalityState.mood || 'neutral').toLowerCase();
+    const affection = personalityState.affection || 0;
+    const weather = (personalityState.weather || '').toLowerCase();
+    
+    // Hair Style Logic
+    // Day (7-20): def (Ponytail)
+    // Night (20-7): down (Loose)
+    let hairStyle = 'def';
+    const isNight = currentHour >= 20 || currentHour < 7;
+    // Shower times: 6-8 AM and 19-21 PM
+    const isShowerTime = (currentHour >= 6 && currentHour < 8) || (currentHour >= 19 && currentHour < 21);
+
+    if (isNight) {
+      hairStyle = 'down';
+    }
+    
+    // Clothes Logic
+    let clothesFolder = 'def';
+    let outfitName = "School Uniform";
+
+    // New Year (Dec 31 - Jan 1)
+    if ((currentMonth === 11 && currentDay === 31) || (currentMonth === 0 && currentDay === 1)) {
+      clothesFolder = 'new_year';
+      outfitName = "New Year's Dress";
+    } else if (currentMonth === 1 && currentDay === 14) {
+      // Valentine's Day (Feb 14)
+      clothesFolder = isNight ? 'vday_lingerie' : 'blackpinkdress';
+      outfitName = isNight ? "Valentine's Lingerie" : "Blackpink Dress";
+    } else if (currentMonth === 9 && currentDay === 31) {
+      // Halloween (Oct 31)
+      clothesFolder = isNight ? 'spider_lingerie' : 'marisa';
+      outfitName = isNight ? "Spider Lingerie" : "Witch Cosplay (Marisa)";
+    } else if (currentMonth === 11 && (currentDay >= 24 && currentDay <= 26)) {
+      // Christmas (Dec 24-26)
+      clothesFolder = isNight ? 'santa_lingerie' : 'santa';
+      outfitName = isNight ? "Santa Lingerie" : "Santa Costume";
+    } else {
+      // Intimacy Logic (High Affection + Flirty/Love + Night)
+      if (isNight && affection > 50 && (mood.includes('flirty') || mood.includes('love') || mood.includes('romantic'))) {
+         clothesFolder = 'vday_lingerie';
+         outfitName = "Valentine's Lingerie";
+      } else if (isShowerTime) {
+         // Shower / Towel Mode
+         clothesFolder = 'bath_towel_white';
+         hairStyle = 'wet';
+         outfitName = "White Bath Towel";
+      } else if (!isNight && (weather.includes('sunny') || weather.includes('clear'))) {
+         clothesFolder = 'sundress_white';
+         outfitName = "White Sundress";
+      } else if (!isNight && (showNotesWindow || mood.includes('focus') || mood.includes('thinking') || mood.includes('learning') || mood.includes('studying'))) {
+         clothesFolder = 'blazerless';
+         outfitName = "School Uniform (Blazerless)";
+      } else if (isNight) {
+         outfitName = "Pajamas (Pink Shirt)"; // Assuming default night look
+      }
+    }
+
+    return { clothesFolder, hairStyle, outfitName };
+  }, [personalityState.mood, personalityState.affection, personalityState.weather, currentHour, currentMonth, currentDay, showNotesWindow]);
+
+  // Report Visual State to Backend
+  useEffect(() => {
+    if (socketConnected) {
+      socket.emit('report_visual_state', { 
+        location: vnScene, 
+        outfit: visualState.outfitName 
+      });
+    }
+  }, [vnScene, visualState.outfitName, socketConnected]);
+
+  const masLayers = useMemo(() => {
+    const mood = (personalityState.mood || 'neutral').toLowerCase();
+    const { clothesFolder, hairStyle } = visualState;
+    
+    // Determine Pose based on mood
+    const isLeaning = mood.includes('leaning') || mood.includes('mysterious') || mood.includes('foggy') || mood.includes('dream') || mood.includes('love') || mood.includes('enchanted');
+
+    // Arm Style Logic (moved up for shared use)
+    let armStyle = 'def'; // def, crossed, point, steepling, restpoint
+    if (!isLeaning) {
+      if (mood.includes('angry') || mood.includes('annoyed') || mood.includes('bored')) {
+        armStyle = 'crossed';
+      } else if (mood.includes('thinking') || mood.includes('focus')) {
+        armStyle = 'steepling';
+      } else if (mood.includes('explaining') || mood.includes('teaching')) {
+        armStyle = 'point';
+      } else if (randomPose) {
+        armStyle = randomPose;
+      }
+    }
+
+    // --- OUTSIDE SCENE OVERRIDE (Single Layer Standing Poses) ---
+    if (vnScene === 'outside') {
+      let sprite = 'ai_normal.png';
+      
+      if (isLeaning) {
+        sprite = 'ai_leaning.png';
+      } else if (isBlinking) {
+        sprite = 'ai_closed_eyes.png';
+      } else if (armStyle === 'point') {
+        sprite = (mood.includes('happy') || mood.includes('excited')) 
+          ? 'ai_arm_point_happy.png' 
+          : 'ai_arm_point_open.png';
+      } else if (mood.includes('angry') || mood.includes('annoyed')) {
+        sprite = 'ai_annoyed.png';
+      } else if (mood.includes('worried') || mood.includes('sad') || mood.includes('anxious') || mood.includes('depressed')) {
+        sprite = 'ai_worried.png';
+      } else if (mood.includes('embarrassed')) {
+        sprite = 'ai_embarrassed.png';
+      } else if (mood.includes('shy') || mood.includes('love')) {
+        sprite = 'ai_shy.png';
+      } else if (mood.includes('happy') || mood.includes('excited')) {
+        sprite = 'ai_happy.png'; 
+      } else if (mood.includes('neutral')) {
+        sprite = 'ai_neutral.png';
+      }
+      return [`/vn/monika/s/${sprite}`];
+    }
+
+    // Base path prefix for face parts
+    // Normal: /vn/monika/f/face-[part].png
+    // Leaning: /vn/monika/f/face-leaning-def-[part].png
+    const facePrefix = isLeaning ? '/vn/monika/f/face-leaning-def-' : '/vn/monika/f/face-';
+
+    // Default Face Parts
+    let eyes = 'eyes-normal.png';
+    let eyebrows = 'eyebrows-mid.png';
+    let mouth = 'mouth-smile.png'; // Default closed mouth (listening)
+    let nose = 'nose-def.png';
+    let blush = null;
+
+    // Mood Logic
+    if (mood.includes('happy') || mood.includes('excited') || mood.includes('joy')) {
+      mouth = 'mouth-smile.png';
+      // eyes = 'eyes-closedhappy.png'; // Optional: happy closed eyes
+    } else if (mood.includes('sad') || mood.includes('lonely') || mood.includes('depressed')) {
+      eyebrows = 'eyebrows-knit.png';
+    } else if (mood.includes('angry') || mood.includes('annoyed')) {
+      eyebrows = 'eyebrows-furrowed.png';
+      mouth = 'mouth-angry.png';
+    } else if (mood.includes('love') || mood.includes('shy')) {
+      eyes = 'eyes-soft.png';
+      mouth = 'mouth-smile.png';
+      blush = 'blush-shade.png'; 
+    } else if (mood.includes('surprised') || mood.includes('shocked')) {
+      eyes = 'eyes-wide.png';
+      mouth = 'mouth-gasp.png';
+      eyebrows = 'eyebrows-up.png';
+    } else if (mood.includes('thinking')) {
+      eyebrows = 'eyebrows-think.png';
+      eyes = 'eyes-left.png';
+    }
+
+    // Random Glance Override
+    if (randomGlance && !isBlinking) {
+      // Don't override if eyes are closed (e.g. blinking or specific mood)
+      if (!eyes.includes('closed')) {
+        if (randomGlance === 'left') eyes = 'eyes-left.png';
+        else if (randomGlance === 'right') eyes = 'eyes-right.png';
+      }
+    }
+
+    // Blinking Override
+    if (isBlinking) {
+      if (mood.includes('angry') || mood.includes('annoyed')) {
+        eyes = 'eyes-closedangry.png';
+      } else {
+        eyes = 'eyes-closedhappy.png';
+      }
+    }
+
+    // Hair logic:
+    // Normal: 0 (back), 10 (front)
+    // Leaning: def-0 (back), def-10 (front)
+    const hairBack = isLeaning ? `/vn/monika/h/${hairStyle}/def-0.png` : `/vn/monika/h/${hairStyle}/0.png`;
+    const hairFront = isLeaning ? `/vn/monika/h/${hairStyle}/def-10.png` : `/vn/monika/h/${hairStyle}/10.png`;
+
+    const layers = [
+      '/vn/monika/t/chair-def.png',      // Chair (Background)
+      hairBack,                          // Hair Back
+    ];
+
+    const armLayers = [];
+    let headBase = null;
+
+    if (isLeaning) {
+      // Leaning Pose (Body + Arms + Head)
+      layers.push(
+        '/vn/monika/b/body-leaning-def-0.png',       // Body Skin
+        '/vn/monika/b/body-leaning-def-1.png',       // Body Skin 1
+        `/vn/monika/c/${clothesFolder}/body-leaning-def-1.png`    // Body Clothes 1
+      );
+      headBase = '/vn/monika/b/body-leaning-def-head.png';
+      
+      armLayers.push(
+        '/vn/monika/b/arms-leaning-def-left-def-10.png', // Left Arm Skin
+        `/vn/monika/c/${clothesFolder}/arms-leaning-def-left-def-10.png`, // Left Arm Clothes
+        '/vn/monika/b/arms-leaning-def-right-def-10.png', // Right Arm Skin
+        `/vn/monika/c/${clothesFolder}/arms-leaning-def-right-def-10.png` // Right Arm Clothes
+      );
+    } else {
+      // Normal Pose (Body + Arms + Head)
+      layers.push(
+        '/vn/monika/b/body-def-0.png',       // Body Skin
+        `/vn/monika/c/${clothesFolder}/body-def-0.png`,   // Body Clothes 0
+        '/vn/monika/b/body-def-1.png',       // Body Skin 1
+        `/vn/monika/c/${clothesFolder}/body-def-1.png`    // Body Clothes 1
+      );
+      headBase = '/vn/monika/b/body-def-head.png';
+
+      // Arms based on style
+      if (armStyle === 'crossed') {
+        armLayers.push(
+          '/vn/monika/b/arms-crossed-10.png',
+          `/vn/monika/c/${clothesFolder}/arms-crossed-10.png`
+        );
+      } else if (armStyle === 'steepling') {
+        armLayers.push(
+          '/vn/monika/b/arms-steepling-10.png',
+          `/vn/monika/c/${clothesFolder}/arms-steepling-10.png`
+        );
+      } else if (armStyle === 'point') {
+        armLayers.push(
+          '/vn/monika/b/arms-left-down-0.png', `/vn/monika/c/${clothesFolder}/arms-left-down-0.png`,
+          '/vn/monika/b/arms-right-point-0.png', `/vn/monika/c/${clothesFolder}/arms-right-point-0.png`
+        );
+      } else if (armStyle === 'restpoint') {
+        armLayers.push(
+          '/vn/monika/b/arms-left-rest-10.png', `/vn/monika/c/${clothesFolder}/arms-left-rest-10.png`,
+          '/vn/monika/b/arms-right-restpoint-10.png', `/vn/monika/c/${clothesFolder}/arms-right-restpoint-10.png`
+        );
+      } else {
+        // Default Down
+        armLayers.push(
+          '/vn/monika/b/arms-left-down-0.png', `/vn/monika/c/${clothesFolder}/arms-left-down-0.png`,
+          '/vn/monika/b/arms-right-down-0.png', `/vn/monika/c/${clothesFolder}/arms-right-down-0.png`
+        );
+      }
+    }
+
+    // Table & Shadow (Before Arms)
+    layers.push('/vn/monika/t/table-def.png');
+    layers.push('/vn/monika/t/table-def-s.png');
+
+    // Arms
+    layers.push(...armLayers);
+
+    // Head Base (Face Skin)
+    if (headBase) layers.push(headBase);
+
+    // Face Parts (Nose -> Mouth -> Eyes -> Eyebrows)
+    layers.push(facePrefix + nose, facePrefix + mouth, facePrefix + eyes, facePrefix + eyebrows);
+
+    if (blush) layers.push(facePrefix + blush);
+
+    // Front Hair
+    layers.push(hairFront);
+
+    return layers;
+  }, [personalityState.mood, visualState, isBlinking, randomGlance, randomPose, vnScene]);
 
   useEffect(() => {
     if (aiSpeaking || userSpeaking) {
@@ -480,6 +837,11 @@ function AppContent() {
       setStatus(t('system.connected'));
       setSocketConnected(true);
       socket.emit('get_settings');
+    });
+
+    socket.on('personality_status', (data) => {
+      // Update local state for Visualizer layers
+      setPersonalityState(prev => ({ ...prev, ...data }));
     });
 
     socket.on('disconnect', () => {
@@ -714,6 +1076,10 @@ function AppContent() {
       socket.off('kasa_update');
       socket.off('vn_scene');
       socket.off('error');
+      socket.off('personality_status');
+      socket.off('project_update');
+      socket.off('auth_status');
+      socket.off('settings');
 
       stopMicVisualizer();
       stopVideo();
@@ -1017,7 +1383,7 @@ function AppContent() {
 
         if (isFist) {
           if (!activeDragElementRef.current) {
-            const draggableElements = ['browser', 'kasa', 'reminders', 'notes'];
+            const draggableElements = ['browser', 'kasa', 'reminders', 'notes', 'companion'];
 
             for (const id of draggableElements) {
               const el = document.getElementById(id);
@@ -1361,6 +1727,18 @@ const handleSend = (e) => {
     }
     setVisibility(!isVisible);
   };
+
+  // Shortcut for Companion Window (Alt+C)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.altKey && (e.code === 'KeyC')) {
+        handleToggleWindow('companion', showCompanionWindow, setShowCompanionWindow);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showCompanionWindow]);
+
   return (
     <div className="h-screen w-screen bg-black text-white/85 font-sans overflow-hidden flex flex-col relative selection:bg-white/10 selection:text-white">
       {isLockScreenVisible && (
@@ -1381,6 +1759,7 @@ const handleSend = (e) => {
           width={viewport.w}
           height={viewport.h}
           backgroundSrc={vnBackground}
+          layers={masLayers} // Pass the composed layers
           sprites={{
             idle: isConnected ? "/vn/ai_idle.png" : "/vn/ai_sleeping.png",
             listen: "/vn/ai_listen.png",
@@ -1389,7 +1768,7 @@ const handleSend = (e) => {
           isAssistantSpeaking={aiSpeaking}
           isUserSpeaking={userSpeaking}
           characterScale={1.20}
-          characterY={10}
+          characterY={-40}
         />
         {/* Subtle VN vignette */}
         <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/55" />
@@ -1633,6 +2012,8 @@ const handleSend = (e) => {
             showKasaWindow={showKasaWindow}
             onToggleBrowser={() => handleToggleWindow('browser', showBrowserWindow, setShowBrowserWindow)}
             showBrowserWindow={showBrowserWindow}
+            onToggleCompanion={() => handleToggleWindow('companion', showCompanionWindow, setShowCompanionWindow)}
+            showCompanionWindow={showCompanionWindow}
             onResetPosition={handleResetPosition}
             activeDragElement={activeDragElement}
             position={elementPositions.tools}
@@ -1674,6 +2055,18 @@ const handleSend = (e) => {
             onMouseDown={(e) => handleMouseDown(e, 'notes')}
             activeDragElement={activeDragElement}
             zIndex={getZIndex('notes')}
+          />
+        )}
+
+        {/* Companion Window */}
+        {showCompanionWindow && (
+          <CompanionWindow
+            socket={socket}
+            onClose={() => setShowCompanionWindow(false)}
+            position={elementPositions.companion}
+            onMouseDown={(e) => handleMouseDown(e, 'companion')}
+            activeDragElement={activeDragElement}
+            zIndex={getZIndex('companion')}
           />
         )}
 
