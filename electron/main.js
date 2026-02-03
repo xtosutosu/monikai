@@ -21,6 +21,7 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1920,
         height: 1080,
+        icon: path.join(__dirname, '../public/icon.png'),
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false, // For simple IPC/Socket.IO usage
