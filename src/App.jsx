@@ -17,6 +17,7 @@ import PersonalityWindow from './components/PersonalityWindow';
 import CameraWindow from './components/CameraWindow';
 import ScreenWindow from './components/ScreenWindow';
 import CompanionWindow from './components/CompanionWindow';
+import SessionPromptWindow from './components/SessionPromptWindow';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 
 const socket = io('http://localhost:8000');
@@ -199,10 +200,11 @@ function AppContent() {
   const [selectedSpeakerId, setSelectedSpeakerId] = useState(() => localStorage.getItem('selectedSpeakerId') || '');
   const [selectedWebcamId, setSelectedWebcamId] = useState(() => localStorage.getItem('selectedWebcamId') || '');
   const [showSettings, setShowSettings] = useState(false);
-  const [currentProject, setCurrentProject] = useState('default');
   const [showPersonalityWindow, setShowPersonalityWindow] = useState(false);
   const [toolPermissions, setToolPermissions] = useState({});
   const [personalityState, setPersonalityState] = useState({ mood: 'neutral', affection: 0 });
+  const [sessionMode, setSessionMode] = useState({ active: false, kind: 'reflective' });
+  const [sessionPromptQueue, setSessionPromptQueue] = useState([]);
 
   // ---------------------------------------------------------------------
   // Modular/Windowed State (kept for your movable windows)
@@ -285,12 +287,13 @@ function AppContent() {
   // Toasts (System notifications)
   // ---------------------------------------------------------------------
   const [toasts, setToasts] = useState([]);
+  const makeId = () =>
+    (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random()}`;
 
   const pushToast = (text, variant = "system", ttl = 3500) => {
-    const id =
-      (typeof crypto !== "undefined" && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random()}`;
+    const id = makeId();
 
     const toast = { id, text: String(text ?? ""), variant };
 
@@ -303,6 +306,22 @@ function AppContent() {
 
   const dismissToast = (id) => {
     setToasts(prev => prev.filter(t => t.id !== id));
+  };
+
+  const enqueueSessionPrompt = (payload) => {
+    if (!payload) return;
+    setSessionPromptQueue(prev => [
+      ...prev,
+      { ...payload, _id: payload._id || payload.id || makeId() }
+    ]);
+  };
+
+  const popSessionPrompt = () => {
+    setSessionPromptQueue(prev => prev.slice(1));
+  };
+
+  const clearSessionPrompts = () => {
+    setSessionPromptQueue([]);
   };
 
   const handleResetPosition = (windowId) => {
@@ -329,7 +348,11 @@ function AppContent() {
       const bottomToolsArea = 140; // space reserved for bottom icons bar
       const bottomPad = 16;
 
-      const chatW = Math.min(980, width - sidePad * 2);
+      const baseChatMax = width - sidePad * 2;
+      const sessionInset = sessionMode.active ? Math.min(180, Math.round(width * 0.12)) : 0;
+      const minChatW = Math.min(520, baseChatMax);
+      const chatW = Math.min(980, baseChatMax - sessionInset);
+      const chatWFinal = Math.max(minChatW, chatW);
 
       // keep chat readable on small screens:
       const maxChatH = Math.min(360, Math.round(height * 0.30));
@@ -342,14 +365,19 @@ function AppContent() {
         height - bottomToolsArea - bottomPad - chatH
       );
 
+      const desiredChatX = width / 2 - Math.round(sessionInset * 0.5);
+      const minChatX = chatWFinal / 2 + sidePad;
+      const maxChatX = width - chatWFinal / 2 - sidePad;
+      const chatX = Math.max(minChatX, Math.min(maxChatX, desiredChatX));
+
       setElementSizes(prev => ({
         ...prev,
-        chat: { w: chatW, h: chatH }
+        chat: { w: chatWFinal, h: chatH }
       }));
 
       setElementPositions(prev => ({
         ...prev,
-        chat: { x: width / 2, y: chatTop },
+        chat: { x: chatX, y: chatTop },
         tools: { x: width / 2, y: height - 100 },
         video: { x: width - 230, y: height - 210 },
         screen: { x: width - 230, y: height - 210 }
@@ -359,7 +387,7 @@ function AppContent() {
     layout();
     window.addEventListener('resize', layout);
     return () => window.removeEventListener('resize', layout);
-  }, []);
+  }, [sessionMode.active]);
 
   // ---------------------------------------------------------------------
   // Update refs when state changes
@@ -548,8 +576,14 @@ function AppContent() {
       }
     }
 
+    // Canon override: when Monika is outside, she wears the school uniform.
+    if (vnScene === 'outside') {
+      clothesFolder = 'def';
+      outfitName = "School Uniform";
+    }
+
     return { clothesFolder, hairStyle, outfitName };
-  }, [personalityState.mood, personalityState.affection, personalityState.weather, currentHour, currentMonth, currentDay, showNotesWindow]);
+  }, [personalityState.mood, personalityState.affection, personalityState.weather, currentHour, currentMonth, currentDay, showNotesWindow, vnScene]);
 
   // Report Visual State to Backend
   useEffect(() => {
@@ -995,10 +1029,18 @@ function AppContent() {
       lastSceneChangeRef.current = Date.now();
     });
 
-    socket.on('project_update', (data) => {
-      console.log("Project Update:", data.project);
-      setCurrentProject(data.project);
-      addMessage('System', t('system.project_focus', { project: data.project }));
+    socket.on('session_mode', (data) => {
+      const active = !!(data && data.active);
+      const kind = data?.kind || 'reflective';
+      setSessionMode({ active, kind });
+      if (!active) {
+        clearSessionPrompts();
+      }
+      pushToast(active ? `Session mode: ${kind}` : 'Session mode ended', 'system');
+    });
+
+    socket.on('session_prompt', (payload) => {
+      enqueueSessionPrompt(payload);
     });
 
     navigator.mediaDevices.enumerateDevices().then(devs => {
@@ -1075,9 +1117,10 @@ function AppContent() {
       socket.off('kasa_devices');
       socket.off('kasa_update');
       socket.off('vn_scene');
+      socket.off('session_mode');
+      socket.off('session_prompt');
       socket.off('error');
       socket.off('personality_status');
-      socket.off('project_update');
       socket.off('auth_status');
       socket.off('settings');
 
@@ -1521,6 +1564,23 @@ function AppContent() {
     }
   };
 
+  const toggleSessionMode = () => {
+    if (!isConnected) return;
+    const nextActive = !sessionMode.active;
+    const kind = sessionMode.kind || 'reflective';
+    socket.emit('session_mode_set', { active: nextActive, kind });
+  };
+
+  const handleSessionPromptSubmit = (payload) => {
+    if (!payload) return;
+    socket.emit('session_exercise_submit', payload);
+  };
+
+  const handleSessionSketchSave = (payload) => {
+    if (!payload) return;
+    socket.emit('session_sketch_save', payload);
+  };
+
 const handleSend = (e) => {
   if (!e || e.key !== 'Enter') return;
 
@@ -1739,6 +1799,23 @@ const handleSend = (e) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showCompanionWindow]);
 
+  const activeSessionPrompt = sessionPromptQueue.length ? sessionPromptQueue[0] : null;
+
+  const sessionPromptPosition = useMemo(() => {
+    const chatX = elementPositions.chat?.x ?? window.innerWidth / 2;
+    const chatTop = elementPositions.chat?.y ?? 220;
+    const chatW = elementSizes.chat?.w ?? 720;
+    const placeInside = chatTop < 220;
+    return {
+      x: chatX,
+      y: chatTop,
+      width: Math.min(760, chatW),
+      placement: placeInside ? 'inside' : 'above',
+      viewportH: viewport.h,
+    };
+  }, [elementPositions.chat, elementSizes.chat, viewport.h]);
+  const sessionVisualShift = sessionMode.active ? Math.min(180, Math.round(viewport.w * 0.12)) : 0;
+
   return (
     <div className="h-screen w-screen bg-black text-white/85 font-sans overflow-hidden flex flex-col relative selection:bg-white/10 selection:text-white">
       {isLockScreenVisible && (
@@ -1769,10 +1846,16 @@ const handleSend = (e) => {
           isUserSpeaking={userSpeaking}
           characterScale={1.20}
           characterY={-40}
+          characterX={sessionVisualShift}
         />
         {/* Subtle VN vignette */}
         <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/55" />
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-15 mix-blend-overlay" />
+
+        {/* Session Mode Overlay */}
+        {sessionMode.active && (
+          <div className="absolute inset-0 bg-gradient-to-b from-[#0f172a]/40 via-black/30 to-[#1f1a12]/50 border-t border-white/10" />
+        )}
 
         {/* Sleep Dimmer */}
         <div className={`absolute inset-0 bg-black/60 transition-opacity duration-[2000ms] ${isConnected ? 'opacity-0' : 'opacity-100'}`} />
@@ -1817,6 +1900,12 @@ const handleSend = (e) => {
 
           {/* Status Chips */}
           <div className="flex items-center gap-2">
+            {sessionMode.active && (
+              <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-white/10 border border-white/20 text-[10px] font-mono text-white/80">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-300/80" />
+                <span>SESSION</span>
+              </div>
+            )}
             {isVideoOn && (
               <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] font-mono text-white/50">
                 <Activity size={10} className="text-green-400" />
@@ -1903,9 +1992,9 @@ const handleSend = (e) => {
 
       {/* Main Content (over VN background) */}
       <div className="flex-1 relative z-10">
-        {/* Floating Project Label */}
+        {/* Floating Scope Label */}
         <div className="absolute top-[64px] left-1/2 -translate-x-1/2 text-white/65 text-xs tracking-widest pointer-events-none z-50 bg-black/50 px-2 py-1 rounded backdrop-blur-sm border border-white/12">
-          {currentProject?.toUpperCase()}
+          GLOBAL
         </div>
 
         {/* Screen Window */}
@@ -1972,6 +2061,24 @@ const handleSend = (e) => {
           />
         )}
 
+        {/* Session Prompt Window (dynamic, above chat) */}
+        {activeSessionPrompt && (
+          <SessionPromptWindow
+            prompt={activeSessionPrompt}
+            position={sessionPromptPosition}
+            onClose={popSessionPrompt}
+            onSubmit={(payload) => {
+              handleSessionPromptSubmit(payload);
+              popSessionPrompt();
+            }}
+            onSketchSave={(payload) => {
+              handleSessionSketchSave(payload);
+              popSessionPrompt();
+            }}
+            zIndex={95}
+          />
+        )}
+
         {/* VN Chat (docked bottom textbox) */}
         <ChatModule
           messages={messages}
@@ -1997,12 +2104,14 @@ const handleSend = (e) => {
             isVideoOn={isVideoOn}
             isScreenCaptureOn={visionMode === 'screen'}
             isHandTrackingEnabled={isHandTrackingEnabled}
+            sessionActive={sessionMode.active}
             showSettings={showSettings}
             onTogglePower={togglePower}
             onToggleMute={toggleMute}
             onToggleVideo={toggleVideo}
             onToggleScreenCapture={toggleScreenCapture}
             onToggleSettings={() => setShowSettings(!showSettings)}
+            onToggleSession={toggleSessionMode}
             onToggleReminders={() => handleToggleWindow('reminders', showRemindersWindow, setShowRemindersWindow)}
             showRemindersWindow={showRemindersWindow}
             onToggleNotes={() => handleToggleWindow('notes', showNotesWindow, setShowNotesWindow)}

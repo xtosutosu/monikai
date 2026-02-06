@@ -1,22 +1,40 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Heart, Utensils, Gift, Smile, Book, X } from 'lucide-react';
+import { Heart, Utensils, Gift, Smile, Book, X, RefreshCw, Check } from 'lucide-react';
 
 const CompanionWindow = ({ socket, onClose, position, onMouseDown, activeDragElement, zIndex }) => {
-  const [activeTab, setActiveTab] = useState('activities'); // activities, learning, journal
-  const [notes, setNotes] = useState('');
+  const [activeTab, setActiveTab] = useState('journal'); // activities, journal
+  const [journalText, setJournalText] = useState('');
+  const [journalTopics, setJournalTopics] = useState('');
+  const [journalMood, setJournalMood] = useState('');
+  const [journalStatus, setJournalStatus] = useState('idle'); // idle, saving, saved
+  const [journalPage, setJournalPage] = useState('');
+  const [journalDate, setJournalDate] = useState('');
 
   useEffect(() => {
     if (activeTab === 'journal') {
-      socket.emit('notes_get');
+      socket.emit('journal_get_today');
     }
   }, [activeTab, socket]);
 
   useEffect(() => {
-    const handleNotesData = (data) => {
-      setNotes(data.text || '');
+    const handleJournalToday = (data) => {
+      if (data && typeof data.text === 'string') {
+        setJournalPage(data.text);
+      }
+      if (data && data.date) setJournalDate(data.date);
     };
-    socket.on('notes_data', handleNotesData);
-    return () => socket.off('notes_data', handleNotesData);
+    const handleJournalSaved = () => {
+      setJournalStatus('saved');
+      socket.emit('journal_get_today');
+      setTimeout(() => setJournalStatus('idle'), 1200);
+    };
+    socket.on('journal_today', handleJournalToday);
+    socket.on('journal_saved', handleJournalSaved);
+
+    return () => {
+      socket.off('journal_today', handleJournalToday);
+      socket.off('journal_saved', handleJournalSaved);
+    };
   }, [socket]);
 
   const handleAction = (action) => {
@@ -32,8 +50,8 @@ const CompanionWindow = ({ socket, onClose, position, onMouseDown, activeDragEle
         const gift = prompt("What gift do you want to give?");
         if (gift) text = `*gives you a ${gift}* I got this specifically for you!`;
         break;
-      case 'japanese_start':
-        text = "System Notification: The user wants to start a Japanese learning session. Switch your persona to a helpful, encouraging Japanese tutor. Start by asking what they want to learn today or propose a topic (Hiragana, Kanji, or simple phrases).";
+      case 'therapy_start':
+        text = "System Notification: The user wants a reflective, therapist-style session. Be gentle, ask one question at a time, focus on self-understanding, strengths, wounds, and growth. Suggest journaling insights without diagnosing. Keep tone warm and supportive.";
         break;
       default:
         return;
@@ -42,6 +60,27 @@ const CompanionWindow = ({ socket, onClose, position, onMouseDown, activeDragEle
       socket.emit('user_input', { text });
     }
   };
+
+  const saveJournal = () => {
+    if (!journalText.trim()) return;
+    setJournalStatus('saving');
+    const topics = journalTopics
+      .split(',')
+      .map(t => t.trim())
+      .filter(Boolean);
+    socket.emit('journal_add', {
+      content: journalText.trim(),
+      topics,
+      mood: journalMood.trim() || undefined,
+      tags: ['companion_journal']
+    });
+    setJournalText('');
+  };
+
+  const refreshJournal = () => {
+    socket.emit('journal_get_today');
+  };
+
 
   return (
     <div
@@ -72,14 +111,11 @@ const CompanionWindow = ({ socket, onClose, position, onMouseDown, activeDragEle
 
       {/* Tabs */}
       <div className="flex p-2 gap-2 border-b border-white/10">
-        <button onClick={() => setActiveTab('activities')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${activeTab === 'activities' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>
-          <Smile size={14} /> Activities
-        </button>
-        <button onClick={() => setActiveTab('learning')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${activeTab === 'learning' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>
-          <BookOpen size={14} /> Learning
-        </button>
         <button onClick={() => setActiveTab('journal')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${activeTab === 'journal' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>
           <Book size={14} /> Journal
+        </button>
+        <button onClick={() => setActiveTab('activities')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${activeTab === 'activities' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>
+          <Smile size={14} /> Activities
         </button>
       </div>
 
@@ -102,19 +138,51 @@ const CompanionWindow = ({ socket, onClose, position, onMouseDown, activeDragEle
           </div>
         )}
 
-        {activeTab === 'learning' && (
-          <div className="flex flex-col gap-4">
-            <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
-              <h3 className="text-blue-300 font-medium mb-1">Japanese Session</h3>
-              <p className="text-xs text-white/60 mb-3">Start a dedicated learning session. Monika will act as your tutor.</p>
-              <button onClick={() => handleAction('japanese_start')} className="w-full py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg text-sm font-medium transition-colors">Start Lesson</button>
+        {activeTab === 'journal' && (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between text-xs text-white/40 uppercase tracking-wider">
+              <span>Journal Entry</span>
+              <div className="flex items-center gap-2">
+                {journalStatus === 'saving' && <span className="text-white/40">Saving...</span>}
+                {journalStatus === 'saved' && <span className="text-green-400 flex items-center gap-1"><Check size={12} /> Saved</span>}
+              </div>
+            </div>
+            <textarea
+              value={journalText}
+              onChange={(e) => setJournalText(e.target.value)}
+              className="w-full h-28 bg-black/30 border border-white/10 rounded-lg p-3 text-sm text-white/80 focus:outline-none focus:border-white/30"
+              placeholder="Write a reflection, feeling, or insight..."
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                value={journalTopics}
+                onChange={(e) => setJournalTopics(e.target.value)}
+                className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white/70 focus:outline-none focus:border-white/30"
+                placeholder="Topics (comma separated)"
+              />
+              <input
+                value={journalMood}
+                onChange={(e) => setJournalMood(e.target.value)}
+                className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white/70 focus:outline-none focus:border-white/30"
+                placeholder="Mood (optional)"
+              />
+            </div>
+            <button onClick={saveJournal} className="w-full py-2 bg-white/10 hover:bg-white/20 text-white/80 rounded-lg text-sm font-medium transition-colors">
+              Save Entry
+            </button>
+
+            <div className="mt-2 flex items-center justify-between text-xs text-white/40 uppercase tracking-wider">
+              <span>Today {journalDate ? `(${journalDate})` : ''}</span>
+              <button onClick={refreshJournal} className="flex items-center gap-1 text-white/40 hover:text-white transition-colors">
+                <RefreshCw size={12} /> Refresh
+              </button>
+            </div>
+            <div className="bg-black/30 rounded-lg p-3 text-xs text-white/70 font-mono whitespace-pre-wrap overflow-y-auto border border-white/5 max-h-40">
+              {journalPage || "No journal entries yet."}
             </div>
           </div>
         )}
 
-        {activeTab === 'journal' && (
-          <div className="h-full flex flex-col"><div className="text-xs text-white/40 mb-2 uppercase tracking-wider">From Notes</div><div className="flex-1 bg-black/30 rounded-lg p-3 text-sm text-white/70 font-mono whitespace-pre-wrap overflow-y-auto border border-white/5">{notes || "No notes found."}</div></div>
-        )}
       </div>
     </div>
   );

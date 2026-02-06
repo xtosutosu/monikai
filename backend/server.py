@@ -185,11 +185,9 @@ DEFAULT_SETTINGS = {
     "tool_permissions": {
         "cancel_reminder": True,
         "control_light": True,
-        "create_project": True,
         "clear_work_memory": True,
         "notes_set": True,
         "run_web_agent": True,
-        "switch_project": True,
         "write_file": True
     },# List of {host, port, name, type}
     "kasa_devices": [], # List of {ip, alias, model}
@@ -213,12 +211,21 @@ DEFAULT_SETTINGS = {
     "proactivity": {
         "idle_nudges": {
             "enabled": True,
-           "threshold_sec": 900,
+            "threshold_sec": 900,
             "cooldown_sec": 1800,
             "min_ai_quiet_sec": 60,
             "max_per_session": 3,
             "max_per_hour": 5,
-            "topic_memory_size": 6
+            "topic_memory_size": 6,
+            "score_threshold": 0.95,
+            "quiet_hours_enabled": True,
+            "quiet_hours_start": "22:00",
+            "quiet_hours_end": "06:00",
+            "adaptive_enabled": True,
+            "adaptive_backoff_step": 0.5,
+            "adaptive_max_multiplier": 3.0,
+            "recent_user_memory_size": 3,
+            "recent_user_max_chars": 160
         },
         "reasoning": {
             "enabled": True,
@@ -392,10 +399,17 @@ async def start_audio(sid, data=None):
         print(f"[SYSTEM NOTIFICATION] Requesting confirmation for tool: {tool_name}")
         asyncio.create_task(sio.emit('tool_confirmation_request', data))
 
-    # Callback to send Project Update to frontend
-    def on_project_update(project_name):
-        print(f"[SYSTEM NOTIFICATION] Project updated to: {project_name}")
-        asyncio.create_task(sio.emit('project_update', {'project': project_name}))
+    # Callback to send Session Update to frontend
+    def on_session_update(session_id):
+        print(f"[SYSTEM NOTIFICATION] Session updated to: {session_id}")
+        asyncio.create_task(sio.emit('session_update', {'session': session_id}))
+
+    # Callback to show session prompt windows
+    def on_session_prompt(payload):
+        try:
+            asyncio.create_task(sio.emit('session_prompt', payload))
+        except Exception:
+            pass
 
     # Callback to send Device Update to frontend
     def on_device_update(devices):
@@ -485,7 +499,8 @@ async def start_audio(sid, data=None):
             on_web_data=on_web_data,
             on_transcription=on_transcription,
             on_tool_confirmation=on_tool_confirmation,
-            on_project_update=on_project_update,
+            on_session_update=on_session_update,
+            on_session_prompt=on_session_prompt,
             on_device_update=on_device_update,
             on_notes_update=on_notes_update,
             on_error=on_error,
@@ -957,9 +972,9 @@ async def user_input(sid, data):
         except Exception:
             pass
         
-        # Log User Input to Project History
-        if audio_loop and audio_loop.project_manager:
-            audio_loop.project_manager.log_chat("User", text)
+        # Log User Input to Session History
+        if audio_loop and getattr(audio_loop, "session_manager", None):
+            audio_loop.session_manager.log_chat("User", text)
             
         # INJECT VIDEO FRAME IF AVAILABLE (VAD-style logic for Text Input)
         # Refresh screen frame for lowest latency
@@ -1029,6 +1044,15 @@ async def user_input(sid, data):
                 await audio_loop.session.send(input=note, end_of_turn=False)
             except Exception:
                 pass
+
+        # Inject memory context (global memory engine)
+        if text and audio_loop and getattr(audio_loop, "build_memory_context", None):
+            try:
+                mem_ctx = audio_loop.build_memory_context(text)
+                if mem_ctx:
+                    await audio_loop.session.send(input=mem_ctx, end_of_turn=False)
+            except Exception:
+                pass
                 
         if text:
             await audio_loop.session.send(input=text, end_of_turn=True)
@@ -1095,14 +1119,11 @@ async def save_memory(sid, data):
 
 def _notes_path():
     try:
-        if audio_loop and getattr(audio_loop, "project_manager", None):
-            base = audio_loop.project_manager.get_current_project_path()
-        else:
-            base = DATA_DIR / "projects" / "temp"
+        base = DATA_DIR / "memory" / "pages"
         base.mkdir(parents=True, exist_ok=True)
         return base / "notes.md"
     except Exception:
-        return DATA_DIR / "projects" / "temp" / "notes.md"
+        return DATA_DIR / "memory" / "pages" / "notes.md"
 
 def _read_notes_text():
     path = _notes_path()
@@ -1132,19 +1153,44 @@ def _append_notes_text(content: str):
     path.write_text(new_text, encoding="utf-8")
     return path
 
+def _journal_today_path():
+    date_key = datetime.now().strftime("%Y-%m-%d")
+    base = DATA_DIR / "memory" / "pages" / "journal"
+    base.mkdir(parents=True, exist_ok=True)
+    return base / f"{date_key}.md", date_key
+
+def _read_journal_today():
+    path, date_key = _journal_today_path()
+    try:
+        if not path.exists():
+            return "", date_key
+        return path.read_text(encoding="utf-8", errors="ignore"), date_key
+    except Exception:
+        return "", date_key
+
+def _resolve_memory_page(path: str) -> Path:
+    base = DATA_DIR / "memory" / "pages"
+    base.mkdir(parents=True, exist_ok=True)
+    if not path:
+        path = "notes.md"
+    p = Path(path)
+    if not p.is_absolute():
+        p = (base / path).resolve()
+    if base not in p.parents and p != base:
+        raise ValueError("Path outside memory pages.")
+    return p
+
 @sio.event
 async def notes_get(sid):
     text = _read_notes_text()
-    project = audio_loop.project_manager.current_project if audio_loop and getattr(audio_loop, "project_manager", None) else "temp"
-    await sio.emit('notes_data', {'text': text, 'project': project}, room=sid)
+    await sio.emit('notes_data', {'text': text, 'scope': 'global'}, room=sid)
 
 @sio.event
 async def notes_set(sid, data):
     try:
         content = (data or {}).get("content", "")
         _write_notes_text(content)
-        project = audio_loop.project_manager.current_project if audio_loop and getattr(audio_loop, "project_manager", None) else "temp"
-        await sio.emit('notes_data', {'text': content, 'project': project}, room=sid)
+        await sio.emit('notes_data', {'text': content, 'scope': 'global'}, room=sid)
     except Exception as e:
         await sio.emit('error', {'msg': f"Failed to save notes: {e}"}, room=sid)
 
@@ -1154,8 +1200,7 @@ async def notes_append(sid, data):
         content = (data or {}).get("content", "")
         _append_notes_text(content)
         text = _read_notes_text()
-        project = audio_loop.project_manager.current_project if audio_loop and getattr(audio_loop, "project_manager", None) else "temp"
-        await sio.emit('notes_data', {'text': text, 'project': project}, room=sid)
+        await sio.emit('notes_data', {'text': text, 'scope': 'global'}, room=sid)
     except Exception as e:
         await sio.emit('error', {'msg': f"Failed to append notes: {e}"}, room=sid)
 
@@ -1163,10 +1208,236 @@ async def notes_append(sid, data):
 async def notes_clear(sid):
     try:
         _write_notes_text("")
-        project = audio_loop.project_manager.current_project if audio_loop and getattr(audio_loop, "project_manager", None) else "temp"
-        await sio.emit('notes_data', {'text': "", 'project': project}, room=sid)
+        await sio.emit('notes_data', {'text': "", 'scope': 'global'}, room=sid)
     except Exception as e:
         await sio.emit('error', {'msg': f"Failed to clear notes: {e}"}, room=sid)
+
+@sio.event
+async def journal_get_today(sid):
+    text, date_key = _read_journal_today()
+    await sio.emit('journal_today', {'text': text, 'date': date_key}, room=sid)
+
+@sio.event
+async def journal_add(sid, data):
+    try:
+        if not audio_loop or not getattr(audio_loop, "memory_engine", None):
+            await sio.emit('error', {'msg': "Memory engine not available."}, room=sid)
+            return
+        content = (data or {}).get("content", "")
+        topics = (data or {}).get("topics") or []
+        mood = (data or {}).get("mood")
+        tags = (data or {}).get("tags") or []
+
+        entry_id = audio_loop.memory_engine.journal_add_entry(
+            content=content,
+            topics=topics,
+            mood=mood,
+            tags=tags,
+        )
+        await sio.emit('journal_saved', {'id': entry_id}, room=sid)
+        text, date_key = _read_journal_today()
+        await sio.emit('journal_today', {'text': text, 'date': date_key}, room=sid)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Failed to add journal entry: {e}"}, room=sid)
+
+@sio.event
+async def journal_finalize(sid, data):
+    try:
+        if not audio_loop or not getattr(audio_loop, "memory_engine", None):
+            await sio.emit('error', {'msg': "Memory engine not available."}, room=sid)
+            return
+        summary = (data or {}).get("summary", "")
+        reflections = (data or {}).get("reflections")
+        session_id = (data or {}).get("session_id")
+        result = audio_loop.memory_engine.journal_finalize_session(
+            summary=summary,
+            reflections=reflections,
+            session_id=session_id,
+        )
+        await sio.emit('journal_finalized', {'status': result}, room=sid)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Failed to finalize session: {e}"}, room=sid)
+
+@sio.event
+async def session_mode_set(sid, data):
+    try:
+        active = bool((data or {}).get("active", False))
+        kind = (data or {}).get("kind") or "reflective"
+        if audio_loop and getattr(audio_loop, "set_session_mode", None):
+            audio_loop.set_session_mode(active=active, kind=kind)
+        await sio.emit('session_mode', {'active': active, 'kind': kind})
+
+        if audio_loop and audio_loop.session:
+            if active:
+                msg = (
+                    "System Notification: Session mode enabled. "
+                    "Be reflective, warm, and attentive. Ask one question at a time, "
+                    "invite the user to share freely (complaints, venting, wins). "
+                    "Offer exercises or reflections only if it feels right. "
+                    "If an exercise is useful, open a prompt via session_prompt. "
+                    "Avoid clinical jargon and avoid diagnosing."
+                )
+            else:
+                msg = (
+                    "System Notification: Session mode disabled. "
+                    "Please write an internal session summary and reflections. "
+                    "Call journal_finalize_session with summary + reflections. "
+                    "Do NOT show the summary to the user."
+                )
+            await audio_loop.session.send(input=msg, end_of_turn=False)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Failed to set session mode: {e}"}, room=sid)
+
+@sio.event
+async def session_exercise_submit(sid, data):
+    try:
+        if not audio_loop or not getattr(audio_loop, "memory_engine", None):
+            await sio.emit('error', {'msg': "Memory engine not available."}, room=sid)
+            return
+        exercise_id = (data or {}).get("exercise_id") or "exercise"
+        title = (data or {}).get("title") or exercise_id
+        fields = (data or {}).get("fields") or {}
+        notes = (data or {}).get("notes") or ""
+
+        lines = [f"Exercise: {title}", ""]
+        for k, v in fields.items():
+            if v is None:
+                continue
+            lines.append(f"- {k}: {v}")
+        if notes:
+            lines.extend(["", f"Notes: {notes}"])
+        content = "\n".join(lines).strip()
+
+        entry_id, _ = audio_loop.memory_engine.add_entry(
+            type="reflection",
+            content=content,
+            tags=["exercise", exercise_id],
+            entities=["user"],
+            origin="real",
+            confidence=0.7,
+            stability="medium",
+            data={"exercise_id": exercise_id, "title": title, "fields": fields, "notes": notes},
+        )
+
+        # Append to today's journal page
+        try:
+            journal_path, _ = _journal_today_path()
+            block = [
+                f"## Exercise: {title} ({datetime.now().strftime('%H:%M')})",
+                *[f"- {k}: {v}" for k, v in fields.items() if v is not None and str(v).strip()],
+            ]
+            if notes:
+                block.append(f"- Notes: {notes}")
+            audio_loop.memory_engine.append_page(str(journal_path), "\n".join(block) + "\n")
+        except Exception:
+            pass
+
+        await sio.emit('session_exercise_saved', {'id': entry_id}, room=sid)
+
+        if audio_loop and audio_loop.session:
+            try:
+                await audio_loop.session.send(
+                    input=f"System Notification: The user completed an exercise '{title}'. You can respond briefly and empathetically.",
+                    end_of_turn=False,
+                )
+            except Exception:
+                pass
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Failed to save exercise: {e}"}, room=sid)
+
+@sio.event
+async def session_sketch_save(sid, data):
+    try:
+        if not audio_loop or not getattr(audio_loop, "memory_engine", None):
+            await sio.emit('error', {'msg': "Memory engine not available."}, room=sid)
+            return
+        image_data = (data or {}).get("image")
+        label = (data or {}).get("label") or "feeling_sketch"
+        if not image_data or "base64," not in image_data:
+            await sio.emit('error', {'msg': "Invalid image data."}, room=sid)
+            return
+
+        header, b64 = image_data.split("base64,", 1)
+        ext = "png"
+        if "image/jpeg" in header:
+            ext = "jpg"
+
+        date_dir = datetime.now().strftime("%Y-%m-%d")
+        out_dir = DATA_DIR / "memory" / "pages" / "journal" / "sketches" / date_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"sketch_{datetime.now().strftime('%H%M%S')}.{ext}"
+        path = out_dir / filename
+
+        import base64 as _b64
+        path.write_bytes(_b64.b64decode(b64))
+
+        entry_id, _ = audio_loop.memory_engine.add_entry(
+            type="reflection",
+            content=f"Feeling sketch saved: {label}",
+            tags=["sketch", "session"],
+            entities=["user"],
+            origin="real",
+            confidence=0.6,
+            stability="low",
+            data={"file": str(path), "label": label},
+        )
+
+        try:
+            journal_path, _ = _journal_today_path()
+            rel = path.relative_to(DATA_DIR)
+            audio_loop.memory_engine.append_page(
+                str(journal_path),
+                f"## Feeling Sketch ({datetime.now().strftime('%H:%M')})\n- file: {rel.as_posix()}\n- label: {label}\n",
+            )
+        except Exception:
+            pass
+
+        await sio.emit('session_sketch_saved', {'id': entry_id, 'file': str(path)}, room=sid)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Failed to save sketch: {e}"}, room=sid)
+
+@sio.event
+async def memory_get_page(sid, data):
+    try:
+        path = (data or {}).get("path") or "notes.md"
+        p = _resolve_memory_page(path)
+        if not p.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("", encoding="utf-8")
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        await sio.emit('memory_page', {'path': str(p), 'text': text}, room=sid)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Failed to read memory page: {e}"}, room=sid)
+
+@sio.event
+async def memory_set_page(sid, data):
+    try:
+        path = (data or {}).get("path") or "notes.md"
+        content = (data or {}).get("content", "")
+        p = _resolve_memory_page(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content or "", encoding="utf-8")
+        await sio.emit('memory_page', {'path': str(p), 'text': content or ""}, room=sid)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Failed to write memory page: {e}"}, room=sid)
+
+@sio.event
+async def memory_append_page(sid, data):
+    try:
+        path = (data or {}).get("path") or "notes.md"
+        content = (data or {}).get("content", "")
+        p = _resolve_memory_page(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            if content and not content.startswith("\n"):
+                f.write("\n")
+            f.write(content)
+            if content and not content.endswith("\n"):
+                f.write("\n")
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        await sio.emit('memory_page', {'path': str(p), 'text': text}, room=sid)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Failed to append memory page: {e}"}, room=sid)
 
 @sio.event
 async def upload_memory(sid, data):
@@ -1406,6 +1677,10 @@ async def report_visual_state(sid, data):
     if personality_system:
         loc = data.get("location")
         outfit = data.get("outfit")
+
+        # Enforce canon: when Monika is outside, she wears her school uniform.
+        if loc == "outside":
+            outfit = "School Uniform"
         
         changed = False
         if loc and loc != personality_system.state.current_location:
@@ -1416,7 +1691,11 @@ async def report_visual_state(sid, data):
             changed = True
             
         if changed and audio_loop and getattr(audio_loop, "session", None):
-            update_msg = f"System Notification: [Visual State Update] Current Location: {personality_system.state.current_location}, Current Outfit: {personality_system.state.current_outfit}."
+            update_msg = (
+                "System Notification: [Visual State Update] "
+                f"Monika Location: {personality_system.state.current_location}, "
+                f"Monika Outfit: {personality_system.state.current_outfit}."
+            )
             print(f"[SERVER] Sending visual update to model: {update_msg}")
             await audio_loop.session.send(input=update_msg, end_of_turn=False)
 

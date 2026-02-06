@@ -119,8 +119,8 @@ const RenderedView = ({ content }) => {
 const NotesWindow = ({ socket, onClose, position, onMouseDown, activeDragElement, zIndex }) => {
     const { t } = useLanguage();
     const [notesText, setNotesText] = useState('');
+    const [pagePath, setPagePath] = useState('notes.md');
     const [isPreview, setIsPreview] = useState(true);
-    const [project, setProject] = useState('temp');
     const [status, setStatus] = useState('idle'); // idle, saving, saved
     const textareaRef = useRef(null);
     const timeoutRef = useRef(null);
@@ -132,7 +132,7 @@ const NotesWindow = ({ socket, onClose, position, onMouseDown, activeDragElement
 
     const requestNotes = () => {
         if (!socket) return;
-        socket.emit('notes_get');
+        socket.emit('memory_get_page', { path: pagePath });
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
         timeoutRef.current = setTimeout(() => setStatus('idle'), 1200);
     };
@@ -147,15 +147,21 @@ const NotesWindow = ({ socket, onClose, position, onMouseDown, activeDragElement
                     setNotesText(data.text);
                 }
             }
-            if (data && data.project) setProject(data.project);
+            if (data && data.path) {
+                const base = data.path.replace(/\\/g, '/');
+                const idx = base.lastIndexOf('memory/pages/');
+                if (idx >= 0) {
+                    setPagePath(base.slice(idx + 'memory/pages/'.length));
+                }
+            }
             setStatus('saved');
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
             timeoutRef.current = setTimeout(() => setStatus('idle'), 1200);
         };
 
-        socket.on('notes_data', onNotes);
+        socket.on('memory_page', onNotes);
         return () => {
-            socket.off('notes_data', onNotes);
+            socket.off('memory_page', onNotes);
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
             if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
             if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
@@ -179,7 +185,7 @@ const NotesWindow = ({ socket, onClose, position, onMouseDown, activeDragElement
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
         setStatus('saving');
         saveTimeoutRef.current = setTimeout(() => {
-            socket.emit('notes_set', { content: text || '' });
+            socket.emit('memory_set_page', { path: pagePath, content: text || '' });
         }, 450);
     };
 
@@ -255,7 +261,7 @@ const NotesWindow = ({ socket, onClose, position, onMouseDown, activeDragElement
                     <FileText size={18} className="text-white" />
                     <span className="text-sm font-medium tracking-wider text-white/90 uppercase">{t('notes.title')}</span>
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-white/50 font-mono border border-white/5">
-                        {project}
+                        GLOBAL
                     </span>
                 </div>
                 <div className="flex items-center gap-3">
@@ -287,6 +293,18 @@ const NotesWindow = ({ socket, onClose, position, onMouseDown, activeDragElement
                         <X size={16} />
                     </button>
                 </div>
+            </div>
+
+            {/* Page Path */}
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-white/10 bg-white/5">
+                <span className="text-[10px] text-white/40 uppercase tracking-wider">Page</span>
+                <input
+                    value={pagePath}
+                    onChange={(e) => setPagePath(e.target.value)}
+                    onBlur={() => requestNotes()}
+                    className="flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-white/70 focus:outline-none focus:border-white/30"
+                    placeholder="notes.md or topics/my_page.md"
+                />
             </div>
 
             <div className="flex-1 relative group bg-black/20 overflow-hidden">

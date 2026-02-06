@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 class MemoryStore:
     """
-    Cross-project user memory store.
+    Global user memory store.
 
     - WORK memory: draft profile stored as JSON + a rendered Markdown view.
     - LONG-TERM memory: canonical Markdown profile overwritten on commit + JSON snapshots kept for history.

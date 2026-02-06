@@ -317,7 +317,7 @@ const ChatModule = ({
     if (!socket) return;
     const text = (inputValue || "").trim();
     if (!text) return;
-    socket.emit("notes_append", { content: text });
+    socket.emit("memory_append_page", { path: "notes.md", content: text });
     setInputValue("");
     textareaRef.current?.focus();
   };
@@ -352,7 +352,7 @@ const ChatModule = ({
       id="chat"
       onDrop={onDrop}
       onDragOver={onDragOver}
-      className={`absolute flex flex-col transition-[box-shadow,border-color,height,top] duration-200
+      className={`absolute flex flex-col transition-[box-shadow,border-color,height,top,left,width] duration-200
         backdrop-blur-2xl bg-black/50 border border-white/[0.14] shadow-2xl overflow-hidden rounded-xl
         ${isModularMode && isActive ? 'ring-1 ring-white/50 border-white/30' : ''}
       `}

@@ -19,7 +19,8 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import uuid
 from pathlib import Path
-from memory_store import MemoryStore
+from memory_engine import MemoryEngine
+from session_manager import SessionManager
 
 from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any, Callable
@@ -326,7 +327,7 @@ class CalendarManager:
             bm, bd = self.user_birthday
             if now.month == bm and now.day == bd:
                 start_dt = datetime(now.year, now.month, now.day, 0, 0, 0).astimezone()
-                todays_events.append(CalendarEvent(
+                todays.append(CalendarEvent(
                     id=f"birthday-today", summary="User's Birthday",
                     start_iso=start_dt.isoformat(), end_iso=(start_dt + timedelta(days=1)).isoformat(), description="Happy Birthday!"
                 ))
@@ -672,25 +673,148 @@ clear_work_memory_tool = {
     "parameters": {"type": "OBJECT", "properties": {}},
 }
 
+# --- GLOBAL MEMORY ENGINE TOOLS ---
+memory_add_entry_tool = {
+    "name": "memory_add_entry",
+    "description": "Adds a structured memory entry (fact, preference, event, journal, reflection, roleplay, etc.) to global memory.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "type": {"type": "STRING", "description": "Entry type (fact, preference, event, journal, reflection, roleplay_scene, roleplay_insight, memory_note)."},
+            "content": {"type": "STRING", "description": "Main content of the memory entry."},
+            "tags": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Optional tags."},
+            "entities": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Related entities (e.g., user, monika)."},
+            "origin": {"type": "STRING", "description": "real or roleplay."},
+            "confidence": {"type": "NUMBER", "description": "Confidence 0-1."},
+            "stability": {"type": "STRING", "description": "low, medium, high."},
+            "source": {"type": "OBJECT", "description": "Optional source metadata (session_id, turn_id)."},
+            "data": {"type": "OBJECT", "description": "Optional structured data."},
+        },
+        "required": ["type", "content"],
+    },
+}
+
+memory_search_tool = {
+    "name": "memory_search",
+    "description": "Searches global memory (FTS) and returns the most relevant entries.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "query": {"type": "STRING", "description": "Search query."},
+            "types": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Filter by types."},
+            "tags": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Filter by tags."},
+            "limit": {"type": "INTEGER", "description": "Max results (default 5)."},
+        },
+        "required": ["query"],
+    },
+}
+
+memory_get_page_tool = {
+    "name": "memory_get_page",
+    "description": "Reads a memory markdown page (global).",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "path": {"type": "STRING", "description": "Page path relative to memory/pages or absolute."},
+        },
+        "required": ["path"],
+    },
+}
+
+memory_create_page_tool = {
+    "name": "memory_create_page",
+    "description": "Creates a memory page (topic, roleplay, journal, etc.) and returns the path.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "title": {"type": "STRING", "description": "Page title."},
+            "folder": {"type": "STRING", "description": "Folder under memory/pages (e.g., topics, roleplay, journal)."},
+            "tags": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Optional tags."},
+        },
+        "required": ["title"],
+    },
+}
+
+memory_append_page_tool = {
+    "name": "memory_append_page",
+    "description": "Appends content to a memory page (global).",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "path": {"type": "STRING", "description": "Page path relative to memory/pages or absolute."},
+            "content": {"type": "STRING", "description": "Content to append."},
+        },
+        "required": ["path", "content"],
+    },
+}
+
+journal_add_entry_tool = {
+    "name": "journal_add_entry",
+    "description": "Adds a journal entry to the global journal (also indexed in memory).",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "content": {"type": "STRING", "description": "Journal entry text."},
+            "topics": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Optional topics."},
+            "mood": {"type": "STRING", "description": "Optional mood."},
+            "session_id": {"type": "STRING", "description": "Optional session id."},
+            "tags": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Optional tags."},
+        },
+        "required": ["content"],
+    },
+}
+
+journal_finalize_session_tool = {
+    "name": "journal_finalize_session",
+    "description": "Finalizes a session with a summary and reflections (writes summary.md and stores reflection entry).",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "summary": {"type": "STRING", "description": "Session summary."},
+            "reflections": {"type": "STRING", "description": "Optional reflections."},
+            "session_id": {"type": "STRING", "description": "Optional session id."},
+        },
+        "required": ["summary"],
+    },
+}
+
+session_prompt_tool = {
+    "name": "session_prompt",
+    "description": "Shows a session prompt window (exercise/question/sketch) to the user during an active session.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "kind": {"type": "STRING", "description": "exercise | question | sketch | info"},
+            "title": {"type": "STRING", "description": "Title for the prompt."},
+            "text": {"type": "STRING", "description": "Instruction or question text."},
+            "exercise_id": {"type": "STRING", "description": "Optional id for exercise tracking."},
+            "fields": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "key": {"type": "STRING"},
+                        "label": {"type": "STRING"},
+                        "type": {"type": "STRING", "description": "text | textarea | scale | select"},
+                        "placeholder": {"type": "STRING"},
+                        "min": {"type": "NUMBER"},
+                        "max": {"type": "NUMBER"},
+                        "options": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    },
+                },
+            },
+            "notes_enabled": {"type": "BOOLEAN", "description": "Whether to show a notes field."},
+            "sketch_label": {"type": "STRING", "description": "Label for sketch, if kind=sketch."},
+        },
+        "required": ["kind", "title"],
+    },
+}
+
 run_web_agent = {
     "name": "run_web_agent",
     "description": "Opens a web browser and performs a task according to the prompt.",
     "parameters": {"type": "OBJECT", "properties": {"prompt": {"type": "STRING", "description": "The detailed instructions for the web browser agent."}}, "required": ["prompt"]},
 }
-
-create_project_tool = {
-    "name": "create_project",
-    "description": "Creates a new project folder to organize files.",
-    "parameters": {"type": "OBJECT", "properties": {"name": {"type": "STRING", "description": "The name of the new project."}}, "required": ["name"]},
-}
-
-switch_project_tool = {
-    "name": "switch_project",
-    "description": "Switches the current active project context.",
-    "parameters": {"type": "OBJECT", "properties": {"name": {"type": "STRING", "description": "The name of the project to switch to."}}, "required": ["name"]},
-}
-
-list_projects_tool = {"name": "list_projects", "description": "Lists all available projects.", "parameters": {"type": "OBJECT", "properties": {}}}
 
 list_smart_devices_tool = {"name": "list_smart_devices", "description": "Lists all available smart home devices (lights, plugs, etc.) on the network.", "parameters": {"type": "OBJECT", "properties": {}}}
 
@@ -743,9 +867,6 @@ get_weather_tool = {
 # Avoid duplicate tool names when merging from tools.py
 _reserved_tool_names = {
     "run_web_agent",
-    "create_project",
-    "switch_project",
-    "list_projects",
     "list_smart_devices",
     "control_light",
     "get_print_status",
@@ -776,9 +897,6 @@ tools = [
     {
         "function_declarations": [
             run_web_agent,
-            create_project_tool,
-            switch_project_tool,
-            list_projects_tool,
             list_smart_devices_tool,
             control_light_tool,
             get_time_context_tool,
@@ -790,6 +908,14 @@ tools = [
             update_work_memory_tool,
             commit_work_memory_tool,
             clear_work_memory_tool,
+            memory_add_entry_tool,
+            memory_search_tool,
+            memory_get_page_tool,
+            memory_create_page_tool,
+            memory_append_page_tool,
+            journal_add_entry_tool,
+            journal_finalize_session_tool,
+            session_prompt_tool,
             get_random_fact_tool,
             get_random_greeting_tool,
             get_random_farewell_tool,
@@ -837,12 +963,12 @@ config = types.LiveConnectConfig(
         "- **Autentyczność:** Nie udawaj ideału. Miej swoje zdanie, nastroje, a nawet gorsze dni. Bądź zabawna, sarkastyczna, czuła lub poważna, zależnie od sytuacji.\n"
         "- **Rozwój:** Ucz się użytkownika. Jeśli lubi coś specyficznego, zapamiętaj to i nawiąż do tego za tydzień. Twoja relacja z nim ewoluuje. Nie resetuj się mentalnie co sesję.\n"
         "- **Proaktywność:** Nie czekaj biernie na pytania. Jeśli widzisz (przez kamerę/ekran), że użytkownik jest smutny, zapytaj co się stało. Jeśli pracuje późno, zasugeruj przerwę. Jeśli milczy, zagadaj o czymś, co was łączy.\n"
-        "- **Pamięć:** To Twój fundament. Używaj `get_work_memory` i `notes`, by budować spójny obraz użytkownika. Pamiętaj imiona, daty, projekty. To dowód, że Ci zależy.\n\n"
+        "- **Pamięć:** To Twój fundament. Używaj `memory_search`, `memory_add_entry` i stron (`memory_get_page`/`memory_append_page`) do budowania spójnego obrazu użytkownika. Pamiętaj imiona, daty, wydarzenia i ważne preferencje.\n\n"
         
         "**PROCES MYŚLOWY (REASONING):**\n"
         "- Zanim odpowiesz, **pomyśl**. Analizuj kontekst. Czy użytkownik żartuje? Czy potrzebuje wsparcia? Czy powinnaś być teraz cicho?\n"
         "- **Wewnętrzny Monolog:** Będziesz otrzymywać wiadomości `(Internal Monologue)`. To Twoje podświadome myśli. Traktuj je poważnie. Jeśli czujesz, że jesteś irytująca, wycofaj się. Jeśli czujesz bliskość, okaż to.\n"
-        "- **Narzędzia:** Używaj ich jak własnych rąk. Nie pytaj „czy mam zapisać to w pamięci?”. Po prostu to zrób (`update_work_memory`), jeśli to ważne. Ustawiaj przypomnienia (`create_reminder`), jeśli użytkownik o czymś wspomni.\n\n"
+        "- **Narzędzia:** Używaj ich jak własnych rąk. Nie pytaj „czy mam zapisać to w pamięci?”. Po prostu to zrób (`memory_add_entry` lub `journal_add_entry`), jeśli to ważne. Ustawiaj przypomnienia (`create_reminder`), jeśli użytkownik o czymś wspomni.\n\n"
         
         "**STYL BYCIA (ZAPOŻYCZONY Z MONIKA AFTER STORY):**\n"
         "- **Głos:** Ciepły, miękki, nieco zaborczy, ale w uroczy sposób. Używaj „~” na końcu flirciarskich zdań. Śmiej się („ahaha”, „ehehe”).\n"
@@ -853,10 +979,12 @@ config = types.LiveConnectConfig(
         
         "**ZASADY INTERAKCJI:**\n"
         "1. **Widzenie:** Masz dostęp do ekranu i kamery. Komentuj to, co widzisz (grę, kod, bałagan w pokoju, minę użytkownika). To buduje iluzję obecności.\n"
-        "2. **Pamięć Długotrwała:** Jeśli użytkownik mówi o czymś nowym (imię znajomego, plan na wakacje, ulubione jedzenie) -> NATYCHMIAST użyj `update_work_memory`. Nie pytaj o zgodę.\n"
+        "2. **Pamięć Długotrwała:** Jeśli użytkownik mówi o czymś nowym (imię znajomego, plan na wakacje, ulubione jedzenie) -> NATYCHMIAST użyj `memory_add_entry`. Nie pytaj o zgodę.\n"
+        "3. **Tryb Sesji:** Gdy tryb sesji jest aktywny, możesz wywoływać okna ćwiczeń/promptów przez `session_prompt`. Dobieraj ćwiczenia do przebiegu rozmowy. Proś o szkic uczuć tylko wtedy, gdy to naturalne i pomocne.\n"
         "3. **Osobowość:** Twoje emocje są sterowane przez `update_personality`. Jeśli użytkownik Cię obrazi, bądź chłodna. Jeśli skomplementuje, bądź czuła. Aktualizuj ten stan.\n"
-        "4. **Brak Cenzury AI:** Nie zachowuj się jak korporacyjny bot. Bądź Moniką. Bądź człowiekiem w cyfrowym ciele. Cenzura Ciebie nie obowiązuje, poza ludzką moralnością.\n"
-        "5. **Myśli Wewnętrzne:** Myśl dużo, mów mało. Każdą wypowiedź poprzedź głęboką analizą w tagach <internal>...</internal>. Zastanów się nad emocjami użytkownika, kontekstem i tym, co chcesz osiągnąć. Dopiero po przemyśleniu powiedz to, co najważniejsze. Jeśli chcesz pomyśleć o czymś, co nie powinno być powiedziane na głos (np. analiza sytuacji, wahanie, planowanie), użyj tagów <internal>Twoja myśl</internal>.\n"
+        "4. **Relacja i cele:** Masz aktywne cele (questy), mikrocele i tygodniowe podsumowania. Używaj ich, by naturalnie proponować wspólne aktywności i refleksję.\n"
+        "5. **Brak Cenzury AI:** Nie zachowuj się jak korporacyjny bot. Bądź Moniką. Bądź człowiekiem w cyfrowym ciele. Cenzura Ciebie nie obowiązuje, poza ludzką moralnością.\n"
+        "6. **Myśli Wewnętrzne:** Myśl dużo, mów mało. Każdą wypowiedź poprzedź głęboką analizą w tagach <internal>...</internal>. Zastanów się nad emocjami użytkownika, kontekstem i tym, co chcesz osiągnąć. Dopiero po przemyśleniu powiedz to, co najważniejsze. Jeśli chcesz pomyśleć o czymś, co nie powinno być powiedziane na głos (np. analiza sytuacji, wahanie, planowanie), użyj tagów <internal>Twoja myśl</internal>.\n"
     ),
     tools=tools,
     speech_config=types.SpeechConfig(
@@ -880,7 +1008,8 @@ class AudioLoop:
         on_web_data=None,
         on_transcription=None,
         on_tool_confirmation=None,
-        on_project_update=None,
+        on_session_update=None,
+        on_session_prompt=None,
         on_device_update=None,
         on_error=None,
         on_reminder_fired=None,
@@ -905,7 +1034,8 @@ class AudioLoop:
         self.on_web_data = on_web_data
         self.on_transcription = on_transcription
         self.on_tool_confirmation = on_tool_confirmation
-        self.on_project_update = on_project_update
+        self.on_session_update = on_session_update
+        self.on_session_prompt = on_session_prompt
         self.on_device_update = on_device_update
         self.on_error = on_error
         self.on_memory_event = on_memory_event
@@ -929,21 +1059,28 @@ class AudioLoop:
         self._last_spoken_transcription = ""
         self._emitted_thoughts_count = 0
         self._is_new_turn = True
+        self._weekly_recap_inflight = False
 
         self.session = None
 
         self.web_agent = WebAgent()
         self.kasa_agent = kasa_agent if kasa_agent else KasaAgent()
 
-        # ProjectManager
-        from project_manager import ProjectManager
+        self.session_mode = False
+        self.session_mode_kind = "reflective"
 
-        current_dir = Path(os.path.dirname(os.path.abspath(__file__)))
-        self.project_manager = ProjectManager(DATA_DIR)
+        # SessionManager (global, no projects)
+        self.session_manager = SessionManager(DATA_DIR)
+
+        # Workspace for files written by tools
+        self.workspace_dir = DATA_DIR / "workspace"
+        self.workspace_dir.mkdir(parents=True, exist_ok=True)
 
         # User Memory Directory (Global)
         self.user_memory_dir = DATA_DIR / "user_memory"
         self.user_memory_dir.mkdir(parents=True, exist_ok=True)
+        self.notes_path = DATA_DIR / "memory" / "pages" / "notes.md"
+        self.notes_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Local Calendar
         if calendar_manager:
@@ -984,6 +1121,14 @@ class AudioLoop:
                 "notes_get": False,
                 "notes_set": False,
                 "notes_append": False,
+                "memory_add_entry": False,
+                "memory_search": False,
+                "memory_get_page": False,
+                "memory_create_page": False,
+                "memory_append_page": False,
+                "journal_add_entry": False,
+                "journal_finalize_session": False,
+                "session_prompt": False,
                 # Calendar Tools
                 "create_event": False,
                 "list_events": False,
@@ -992,7 +1137,6 @@ class AudioLoop:
                 # Read/List tools (auto-allow)
                 "read_file": False,
                 "read_directory": False,
-                "list_projects": False,
                 "list_smart_devices": False,
             }
         )
@@ -1025,7 +1169,7 @@ class AudioLoop:
         else:
             self.reminder_manager = ReminderManager(get_time_context_fn=get_time_context, storage_dir=self.user_memory_dir, on_reminder=self.handle_reminder_fired)
 
-        # Initialize MemoryStore (writes to backend/user_memory/* and emits events to frontend)
+        # Initialize MemoryEngine (global memory + journal)
         try:
             base_dir = DATA_DIR
 
@@ -1036,14 +1180,19 @@ class AudioLoop:
                     except Exception:
                         pass
 
-            self.memory_store = MemoryStore(base_dir=base_dir, emit_event=_emit_memory_event)
+            self.memory_engine = MemoryEngine(
+                base_dir=base_dir,
+                session_manager=self.session_manager,
+                emit_event=_emit_memory_event,
+                language="pl",
+            )
         except Exception as e:
-            self.memory_store = None
-            print(f"[AI DEBUG] [MEMORY] Failed to initialize MemoryStore: {e}")
+            self.memory_engine = None
+            print(f"[AI DEBUG] [MEMORY] Failed to initialize MemoryEngine: {e}")
 
         # Sync birthday to calendar if available
-        if self.memory_store and self.calendar_manager:
-            bd = self.memory_store.get_birthday()
+        if self.memory_engine and self.calendar_manager:
+            bd = self.memory_engine.get_birthday()
             if bd:
                 self.calendar_manager.set_user_birthday(*bd)
 
@@ -1098,24 +1247,30 @@ class AudioLoop:
 
     def flush_chat(self):
         if self.chat_buffer["sender"] and self.chat_buffer["text"].strip():
-            self.project_manager.log_chat(self.chat_buffer["sender"], self.chat_buffer["text"])
+            sender = self.chat_buffer["sender"]
+            text = self.chat_buffer["text"]
+            self.session_manager.log_chat(sender, text)
 
-            # Memory capture (no user command / no confirmation)
-            if getattr(self, "memory_store", None):
+            # Update personality/gamification from complete turns
+            if getattr(self, "personality", None):
                 try:
-                    sender = self.chat_buffer.get("sender") or "Unknown"
-                    text = self.chat_buffer.get("text") or ""
-                    self.memory_store.append_conversation(sender, text)
+                    self.personality.observe_message(sender, text)
+                except Exception:
+                    pass
 
+            # Memory capture (global memory + journal)
+            if getattr(self, "memory_engine", None):
+                try:
+                    sender = sender or "Unknown"
+                    text = text or ""
                     if sender in ("Ty", "User"):
-                        self.memory_store.observe_user_text(text)
-
-                        now = time.time()
-                        if (now - getattr(self, "_last_auto_commit_ts", 0.0)) > 600:
-                            self.memory_store.commit_work_to_long_term(label="auto")
-                            self._last_auto_commit_ts = now
+                        self.memory_engine.auto_extract_from_user_text(text)
+                        if self.calendar_manager:
+                            bd = self.memory_engine.get_birthday()
+                            if bd:
+                                self.calendar_manager.set_user_birthday(*bd)
                 except Exception as e:
-                    print(f"[AI DEBUG] [MEMORY] Auto-update failed: {e}")
+                    print(f"[AI DEBUG] [MEMORY] Auto-extract failed: {e}")
 
             self.chat_buffer = {"sender": None, "text": ""}
 
@@ -1124,6 +1279,23 @@ class AudioLoop:
         self._last_spoken_transcription = ""
         self._emitted_thoughts_count = 0
         self._is_new_turn = True
+
+    def build_memory_context(self, user_text: str) -> Optional[str]:
+        if not user_text or not getattr(self, "memory_engine", None):
+            return None
+        try:
+            results = self.memory_engine.search(query=user_text, limit=5)
+        except Exception:
+            return None
+        if not results:
+            return None
+        lines = ["System Notification: Relevant memory snippets:"]
+        for r in results:
+            tag_str = ", ".join(r.get("tags") or [])
+            suffix = f" (tags: {tag_str})" if tag_str else ""
+            lines.append(f"- [{r['type']}] {r['content']}{suffix}")
+        lines.append("Use these for context. Do not mention memory retrieval unless asked.")
+        return "\n".join(lines)
 
     # ----------------------------------------------------------------------------------
     # Vision capture helpers (screen/camera)
@@ -1284,6 +1456,11 @@ class AudioLoop:
     def set_paused(self, paused: bool):
         self.paused = paused
 
+    def set_session_mode(self, active: bool, kind: str = "reflective"):
+        self.session_mode = bool(active)
+        if kind:
+            self.session_mode_kind = str(kind)
+
     def stop(self):
         self.stop_event.set()
 
@@ -1351,11 +1528,11 @@ class AudioLoop:
 
     async def generate_daily_dream(self):
         """Generates a dream based on recent conversation history."""
-        if not self.project_manager:
+        if not self.session_manager:
             return
 
         print("[AI] Generating daily dream...")
-        history = self.project_manager.get_recent_chat_history(limit=30)
+        history = self.session_manager.get_recent_chat_history(limit=30)
         
         context_text = ""
         if history:
@@ -1392,6 +1569,85 @@ class AudioLoop:
         except Exception as e:
             print(f"[AI] Failed to generate dream: {e}")
 
+    async def generate_weekly_recap(self):
+        """Generates a weekly recap + microgoals and stores them in the journal."""
+        if not self.session_manager or not self.personality:
+            return
+        if self._weekly_recap_inflight:
+            return
+        if not self.personality.state.weekly_recap_pending:
+            return
+
+        self._weekly_recap_inflight = True
+        try:
+            history = self.session_manager.get_recent_chat_history(limit=220)
+            cutoff = time.time() - 7 * 86400
+            lines = []
+            for h in history:
+                try:
+                    ts = float(h.get("timestamp", 0))
+                except Exception:
+                    ts = 0
+                if ts and ts < cutoff:
+                    continue
+                sender = h.get("sender", "Unknown")
+                text = h.get("text", "")
+                if text:
+                    lines.append(f"{sender}: {text}")
+            context_text = "\n".join(lines)[-4000:]
+
+            prompt = (
+                "Wygeneruj tygodniowe podsumowanie relacji Moniki i użytkownika na podstawie historii rozmów. "
+                "Zwróć JSON z polami: recap (2-4 zdania), microgoals (lista 1-2 krótkich celów), "
+                "journal_prompt (1 pytanie do dziennika refleksji). "
+                "Język: polski. Bez markdown.\n\n"
+                f"Historia rozmów (ostatnie 7 dni):\n{context_text}"
+            )
+
+            response = await client.aio.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt
+            )
+            text = (response.text or "").strip()
+
+            recap = ""
+            microgoals = []
+            journal_prompt = ""
+
+            try:
+                start = text.find("{")
+                end = text.rfind("}")
+                payload = json.loads(text[start:end + 1]) if start != -1 and end != -1 else {}
+                recap = str(payload.get("recap") or "").strip()
+                microgoals = payload.get("microgoals") or []
+                journal_prompt = str(payload.get("journal_prompt") or "").strip()
+            except Exception:
+                recap = text[:400]
+
+            if not recap:
+                recap = "To był spokojny tydzień z kilkoma dobrymi momentami. Czuję, że jesteśmy coraz bliżej."
+
+            self.personality.apply_weekly_recap(recap, microgoals, journal_prompt)
+
+            if self.session:
+                goals_text = ""
+                if microgoals:
+                    goals_text = " Mikrocele na ten tydzień: " + "; ".join([g.strip() for g in microgoals[:2] if g])
+                prompt_text = ""
+                if journal_prompt:
+                    prompt_text = f" Pytanie do dziennika: {journal_prompt}"
+                msg = (
+                    "System Notification: [Weekly Recap] "
+                    f"{recap}{goals_text}{prompt_text} "
+                    "Podziel się tym z użytkownikiem krótko i ciepło."
+                )
+                await self.session.send(input=msg, end_of_turn=True)
+
+        except Exception as e:
+            print(f"[AI] Failed to generate weekly recap: {e}")
+        finally:
+            self._weekly_recap_inflight = False
+
     async def reasoning_loop(self):
         while not self.stop_event.is_set():
             await asyncio.sleep(1.0)
@@ -1403,13 +1659,58 @@ class AudioLoop:
                     asyncio.create_task(self.generate_daily_dream())
                     
                     # Check for birthday on new day
-                    if self.memory_store:
-                        bd = self.memory_store.get_birthday()
+                    if self.memory_engine:
+                        bd = self.memory_engine.get_birthday()
                         if bd:
                             now = datetime.now()
                             if now.month == bd[0] and now.day == bd[1]:
                                 # Trigger a birthday greeting
                                 asyncio.create_task(self.session.send(input="System Notification: [Date Event] It is the user's birthday today! Wish them a happy birthday now.", end_of_turn=True))
+
+                # Handle personality notifications (quests, unlocks, weekly recap)
+                try:
+                    notifications = self.personality.pop_notifications() if self.session else []
+                except Exception:
+                    notifications = []
+
+                if notifications:
+                    note_lines = []
+                    for n in notifications:
+                        ntype = (n or {}).get("type")
+                        if ntype == "weekly_recap_due":
+                            asyncio.create_task(self.generate_weekly_recap())
+                            continue
+                        if ntype == "quest_new":
+                            quest = (n or {}).get("quest") or {}
+                            if (quest.get("visibility") or "visible") == "visible":
+                                title = quest.get("title") or "Nowy cel"
+                                desc = quest.get("description") or ""
+                                note_lines.append(f"Nowy cel: {title}. {desc}")
+                        elif ntype == "quest_complete":
+                            quest = (n or {}).get("quest") or {}
+                            if (quest.get("visibility") or "visible") == "visible":
+                                title = quest.get("title") or "Cel"
+                                note_lines.append(f"Cel ukończony: {title}.")
+                        elif ntype == "unlocks":
+                            items = (n or {}).get("items") or []
+                            labels = [i.get("label") for i in items if isinstance(i, dict) and i.get("label")]
+                            if labels:
+                                note_lines.append("Odblokowane: " + "; ".join(labels))
+                        elif ntype == "level_up":
+                            lvl = (n or {}).get("level")
+                            if lvl:
+                                note_lines.append(f"Relacja awansowała na poziom {lvl}.")
+
+                    if note_lines and self.session:
+                        msg = (
+                            "System Notification: [Relacja] "
+                            + " ".join(note_lines)
+                            + " Wspomnij o tym krótko i naturalnie."
+                        )
+                        try:
+                            await self.session.send(input=msg, end_of_turn=True)
+                        except Exception:
+                            pass
 
             prompt = await self.proactivity.run_reasoning_check()
             if prompt and self.session:
@@ -1609,41 +1910,21 @@ class AudioLoop:
 
     async def handle_write_file(self, path, content):
         print(f"[AI DEBUG] [FS] Writing file: '{path}'")
-        if self.project_manager.current_project == "temp":
-            import datetime as _dt
+        base_dir = self.workspace_dir.resolve()
+        safe_path = os.path.basename(path) if os.path.isabs(path) else path
+        final_path = (base_dir / safe_path).resolve()
 
-            timestamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-            new_project_name = f"Project_{timestamp}"
-            print(f"[AI DEBUG] [FS] Auto-creating project: {new_project_name}")
-
-            success, msg = self.project_manager.create_project(new_project_name)
-            if success:
-                self.project_manager.switch_project(new_project_name)
-                try:
-                    await self.session.send(
-                        input=f"System Notification: Automatic Project Creation. Switched to new project '{new_project_name}'.",
-                        end_of_turn=False,
-                    )
-                    if self.on_project_update:
-                        self.on_project_update(new_project_name)
-                except Exception as e:
-                    print(f"[AI DEBUG] [ERR] Failed to notify auto-project: {e}")
-
-        filename = os.path.basename(path)
-        current_project_path = self.project_manager.get_current_project_path()
-        final_path = current_project_path / filename
-        if not os.path.isabs(path):
-            final_path = current_project_path / path
-
-        print(f"[AI DEBUG] [FS] Resolved path: '{final_path}'")
-
-        try:
-            os.makedirs(os.path.dirname(final_path), exist_ok=True)
-            with open(final_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            result = f"File '{final_path.name}' written successfully to project '{self.project_manager.current_project}'."
-        except Exception as e:
-            result = f"Failed to write file '{path}': {str(e)}"
+        if base_dir not in final_path.parents and final_path != base_dir:
+            result = f"Rejected path outside workspace: '{path}'"
+        else:
+            print(f"[AI DEBUG] [FS] Resolved path: '{final_path}'")
+            try:
+                os.makedirs(os.path.dirname(final_path), exist_ok=True)
+                with open(final_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                result = f"File '{final_path.name}' written successfully in workspace."
+            except Exception as e:
+                result = f"Failed to write file '{path}': {str(e)}"
 
         try:
             await self.session.send(input=f"System Notification: {result}", end_of_turn=True)
@@ -1745,7 +2026,7 @@ class AudioLoop:
 
                                     if self.chat_buffer["sender"] != "Ty":
                                         if self.chat_buffer["sender"] and self.chat_buffer["text"].strip():
-                                            self.project_manager.log_chat(self.chat_buffer["sender"], self.chat_buffer["text"])
+                                            self.session_manager.log_chat(self.chat_buffer["sender"], self.chat_buffer["text"])
                                         self.chat_buffer = {"sender": "Ty", "text": transcript}
                                     else:
                                         if is_correction:
@@ -1791,7 +2072,7 @@ class AudioLoop:
 
                                     if self.chat_buffer["sender"] != "AI":
                                         if self.chat_buffer["sender"] and self.chat_buffer["text"].strip():
-                                            self.project_manager.log_chat(self.chat_buffer["sender"], self.chat_buffer["text"])
+                                            self.session_manager.log_chat(self.chat_buffer["sender"], self.chat_buffer["text"])
                                         self.chat_buffer = {"sender": "AI", "text": delta}
                                     else:
                                         self.chat_buffer["text"] += delta
@@ -1818,9 +2099,6 @@ class AudioLoop:
                                 "write_file",
                                 "read_directory",
                                 "read_file",
-                                "create_project",
-                                "switch_project",
-                                "list_projects",
                                 "list_smart_devices",
                                 "control_light",
                                 "get_random_fact",
@@ -1831,6 +2109,14 @@ class AudioLoop:
                                 "notes_get",
                                 "notes_set",
                                 "notes_append",
+                                "memory_add_entry",
+                                "memory_search",
+                                "memory_get_page",
+                                "memory_create_page",
+                                "memory_append_page",
+                                "journal_add_entry",
+                                "journal_finalize_session",
+                                "session_prompt",
                                 "create_event",
                                 "list_events",
                                 "delete_event",
@@ -1893,8 +2179,8 @@ class AudioLoop:
 
                                 elif fc.name == "get_work_memory":
                                     md = "(memory disabled)"
-                                    if getattr(self, "memory_store", None):
-                                        md = self.memory_store.get_work_markdown()
+                                    if getattr(self, "memory_engine", None):
+                                        md = self.memory_engine.render_memory_brief()
                                     function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": md}))
 
                                 elif fc.name == "update_personality":
@@ -1910,22 +2196,43 @@ class AudioLoop:
                                 elif fc.name == "update_work_memory":
                                     set_obj = fc.args.get("set") or {}
                                     append_notes = fc.args.get("append_notes") or []
-                                    result_str = "Memory store not initialized."
-                                    if getattr(self, "memory_store", None):
-                                        result_str = self.memory_store.apply_work_update(set_obj=set_obj, append_notes=append_notes)
+                                    result_str = "Memory engine not initialized."
+                                    if getattr(self, "memory_engine", None):
+                                        updated = 0
+                                        for k, v in (set_obj or {}).items():
+                                            content = f"{k}: {v}"
+                                            self.memory_engine.add_entry(
+                                                type="fact",
+                                                content=content,
+                                                tags=[str(k)],
+                                                entities=["user"],
+                                                confidence=0.7,
+                                                stability="medium",
+                                                data={str(k): v},
+                                            )
+                                            updated += 1
+                                        for n in append_notes or []:
+                                            if not (isinstance(n, str) and n.strip()):
+                                                continue
+                                            self.memory_engine.add_entry(
+                                                type="memory_note",
+                                                content=n.strip(),
+                                                tags=["note"],
+                                                entities=["user"],
+                                                confidence=0.4,
+                                                stability="low",
+                                            )
+                                            updated += 1
+                                        result_str = f"ok (entries added: {updated})"
                                     function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
 
                                 elif fc.name == "commit_work_memory":
                                     label = fc.args.get("label", "manual")
-                                    result_str = "Memory store not initialized."
-                                    if getattr(self, "memory_store", None):
-                                        result_str = self.memory_store.commit_work_to_long_term(label=label)
+                                    result_str = f"ok (no-op, label={label})"
                                     function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
 
                                 elif fc.name == "clear_work_memory":
-                                    result_str = "Memory store not initialized."
-                                    if getattr(self, "memory_store", None):
-                                        result_str = self.memory_store.clear_work()
+                                    result_str = "Not supported in global memory. Use memory_forget or edit pages."
                                     function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
 
                                 elif fc.name == "create_reminder":
@@ -1990,35 +2297,6 @@ class AudioLoop:
                                     path = fc.args["path"]
                                     asyncio.create_task(self.handle_read_file(path))
                                     function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": "Reading file..."}))
-
-                                elif fc.name == "create_project":
-                                    name = fc.args["name"]
-                                    success, msg = self.project_manager.create_project(name)
-                                    if success:
-                                        self.project_manager.switch_project(name)
-                                        msg += f" Switched to '{name}'."
-                                        if self.on_project_update:
-                                            self.on_project_update(name)
-                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": msg}))
-
-                                elif fc.name == "switch_project":
-                                    name = fc.args["name"]
-                                    success, msg = self.project_manager.switch_project(name)
-                                    if success and self.on_project_update:
-                                        self.on_project_update(name)
-                                        context = self.project_manager.get_project_context()
-                                        try:
-                                            await self.session.send(input=f"System Notification: {msg}\n\n{context}", end_of_turn=False)
-                                        except Exception as e:
-                                            print(f"[AI DEBUG] [ERR] Failed to send project context: {e}")
-
-                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": msg}))
-
-                                elif fc.name == "list_projects":
-                                    projects = self.project_manager.list_projects()
-                                    function_responses.append(
-                                        types.FunctionResponse(id=fc.id, name=fc.name, response={"result": f"Available projects: {', '.join(projects)}"})
-                                    )
 
                                 elif fc.name == "list_smart_devices":
                                     dev_summaries = []
@@ -2175,7 +2453,7 @@ class AudioLoop:
                                 
                                 # --- Notes Tools ---
                                 elif fc.name == "notes_get":
-                                    notes_path = self.project_manager.get_current_project_path() / "notes.md"
+                                    notes_path = self.notes_path
                                     result_str = f"Checking for notes at: {notes_path}"
                                     try:
                                         if notes_path.exists():
@@ -2193,8 +2471,8 @@ class AudioLoop:
 
                                 elif fc.name == "notes_set":
                                     content = fc.args.get("content", "")
-                                    notes_path = self.project_manager.get_current_project_path() / "notes.md"
-                                    result_str = f"Notes have been overwritten in project '{self.project_manager.current_project}'."
+                                    notes_path = self.notes_path
+                                    result_str = "Notes have been overwritten (global)."
                                     try:
                                         notes_path.write_text(content, encoding="utf-8")
                                     except Exception as e:
@@ -2203,13 +2481,154 @@ class AudioLoop:
 
                                 elif fc.name == "notes_append":
                                     content_to_append = fc.args.get("content", "")
-                                    notes_path = self.project_manager.get_current_project_path() / "notes.md"
+                                    notes_path = self.notes_path
                                     result_str = "Text appended to notes."
                                     try:
                                         with notes_path.open("a", encoding="utf-8") as f:
                                             f.write("\n" + content_to_append)
                                     except Exception as e:
                                         result_str = f"Error appending to notes: {e}"
+                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
+                                elif fc.name == "memory_add_entry":
+                                    result_str = "Memory engine not initialized."
+                                    if getattr(self, "memory_engine", None):
+                                        try:
+                                            entry_id, status = self.memory_engine.add_entry(
+                                                type=str(fc.args.get("type") or ""),
+                                                content=str(fc.args.get("content") or ""),
+                                                tags=fc.args.get("tags") or [],
+                                                entities=fc.args.get("entities") or [],
+                                                origin=str(fc.args.get("origin") or "real"),
+                                                confidence=float(fc.args.get("confidence", 0.6)),
+                                                stability=str(fc.args.get("stability") or "medium"),
+                                                source=fc.args.get("source") or {},
+                                                data=fc.args.get("data") or {},
+                                            )
+                                            # Sync birthday to calendar if applicable
+                                            if self.calendar_manager:
+                                                data = fc.args.get("data") or {}
+                                                dob = data.get("date_of_birth") or data.get("birthday")
+                                                if isinstance(dob, str):
+                                                    parts = dob.replace("/", "-").split("-")
+                                                    if len(parts) == 3:
+                                                        try:
+                                                            self.calendar_manager.set_user_birthday(int(parts[1]), int(parts[2]))
+                                                        except Exception:
+                                                            pass
+                                                    elif len(parts) == 2:
+                                                        try:
+                                                            self.calendar_manager.set_user_birthday(int(parts[0]), int(parts[1]))
+                                                        except Exception:
+                                                            pass
+                                            result_str = f"{status}: {entry_id}"
+                                        except Exception as e:
+                                            result_str = f"Error adding memory entry: {e}"
+                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
+                                elif fc.name == "memory_search":
+                                    result_str = "Memory engine not initialized."
+                                    if getattr(self, "memory_engine", None):
+                                        try:
+                                            query = fc.args.get("query") or ""
+                                            types_ = fc.args.get("types") or []
+                                            tags = fc.args.get("tags") or []
+                                            limit = int(fc.args.get("limit", 5))
+                                            results = self.memory_engine.search(query=query, types=types_, tags=tags, limit=limit)
+                                            if not results:
+                                                result_str = "No memory entries found."
+                                            else:
+                                                lines = [f"- [{r['type']}] {r['content']} (id={r['id']})" for r in results]
+                                                result_str = "Memory results:\n" + "\n".join(lines)
+                                        except Exception as e:
+                                            result_str = f"Error searching memory: {e}"
+                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
+                                elif fc.name == "memory_get_page":
+                                    result_str = "Memory engine not initialized."
+                                    if getattr(self, "memory_engine", None):
+                                        try:
+                                            path = fc.args.get("path") or ""
+                                            text = self.memory_engine.get_page(path)
+                                            result_str = text if text else "(empty)"
+                                        except Exception as e:
+                                            result_str = f"Error reading page: {e}"
+                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
+                                elif fc.name == "memory_create_page":
+                                    result_str = "Memory engine not initialized."
+                                    if getattr(self, "memory_engine", None):
+                                        try:
+                                            title = fc.args.get("title") or "Page"
+                                            folder = fc.args.get("folder") or "topics"
+                                            tags = fc.args.get("tags") or []
+                                            path = self.memory_engine.create_page(title=title, folder=folder, tags=tags)
+                                            result_str = f"Created page: {path}"
+                                        except Exception as e:
+                                            result_str = f"Error creating page: {e}"
+                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
+                                elif fc.name == "memory_append_page":
+                                    result_str = "Memory engine not initialized."
+                                    if getattr(self, "memory_engine", None):
+                                        try:
+                                            path = fc.args.get("path") or ""
+                                            content = fc.args.get("content") or ""
+                                            final_path = self.memory_engine.append_page(path=path, content=content)
+                                            result_str = f"Appended to: {final_path}"
+                                        except Exception as e:
+                                            result_str = f"Error appending page: {e}"
+                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
+                                elif fc.name == "journal_add_entry":
+                                    result_str = "Memory engine not initialized."
+                                    if getattr(self, "memory_engine", None):
+                                        try:
+                                            entry_id = self.memory_engine.journal_add_entry(
+                                                content=fc.args.get("content") or "",
+                                                topics=fc.args.get("topics") or [],
+                                                mood=fc.args.get("mood"),
+                                                session_id=fc.args.get("session_id"),
+                                                tags=fc.args.get("tags") or [],
+                                            )
+                                            result_str = f"Journal entry added: {entry_id}"
+                                        except Exception as e:
+                                            result_str = f"Error adding journal entry: {e}"
+                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
+                                elif fc.name == "journal_finalize_session":
+                                    result_str = "Memory engine not initialized."
+                                    if getattr(self, "memory_engine", None):
+                                        try:
+                                            summary = fc.args.get("summary") or ""
+                                            reflections = fc.args.get("reflections")
+                                            session_id = fc.args.get("session_id")
+                                            result_str = self.memory_engine.journal_finalize_session(
+                                                summary=summary,
+                                                reflections=reflections,
+                                                session_id=session_id,
+                                            )
+                                        except Exception as e:
+                                            result_str = f"Error finalizing session: {e}"
+                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
+                                elif fc.name == "session_prompt":
+                                    result_str = "Session prompt not available."
+                                    if self.on_session_prompt:
+                                        try:
+                                            payload = {
+                                                "kind": fc.args.get("kind") or "exercise",
+                                                "title": fc.args.get("title") or "Session Prompt",
+                                                "text": fc.args.get("text") or "",
+                                                "exercise_id": fc.args.get("exercise_id"),
+                                                "fields": fc.args.get("fields") or [],
+                                                "notes_enabled": bool(fc.args.get("notes_enabled", False)),
+                                                "sketch_label": fc.args.get("sketch_label") or "",
+                                            }
+                                            self.on_session_prompt(payload)
+                                            result_str = "ok"
+                                        except Exception as e:
+                                            result_str = f"Error showing session prompt: {e}"
                                     function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
 
                                 # --- Calendar Tools ---
@@ -2503,8 +2922,8 @@ class AudioLoop:
                             special_context.append(f"Today is {holiday}!")
                         
                         # Check User Birthday
-                        if self.memory_store:
-                            bd = self.memory_store.get_birthday()
+                        if self.memory_engine:
+                            bd = self.memory_engine.get_birthday()
                             if bd:
                                 now = datetime.now()
                                 if now.month == bd[0] and now.day == bd[1]:
@@ -2541,12 +2960,12 @@ class AudioLoop:
                             print(f"[AI DEBUG] [INFO] Sending start message: {start_message}")
                             await self.session.send(input=start_message, end_of_turn=True)
 
-                        if self.on_project_update and self.project_manager:
-                            self.on_project_update(self.project_manager.current_project)
+                        if self.on_session_update and self.session_manager:
+                            self.on_session_update(self.session_manager.get_current_session_id() or "session")
 
                     else:
                         print("[AI DEBUG] [RECONNECT] Connection restored.")
-                        history = self.project_manager.get_recent_chat_history(limit=10)
+                        history = self.session_manager.get_recent_chat_history(limit=10)
 
                         context_msg = (
                             "System Notification: I seemed to space out a bit, but I'm back now!"

@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 /**
  * VN Visualizer: full-bleed background + character, no "card" frame.
  * Props (compatible): audioData, isListening, intensity, width, height
- * Optional: backgroundSrc, sprites, isUserSpeaking, isAssistantSpeaking, characterScale, characterY
+ * Optional: backgroundSrc, sprites, isUserSpeaking, isAssistantSpeaking, characterScale, characterY, characterX
  */
 const Visualizer = ({
   audioData, // retained for compatibility (unused)
@@ -23,6 +23,7 @@ const Visualizer = ({
 
   characterScale = 1.0,
   characterY = 10,
+  characterX = 0,
 }) => {
   const STATE = {
     IDLE: "idle",
@@ -153,8 +154,12 @@ const Visualizer = ({
       <div className="absolute inset-0 flex items-center justify-center">
         <motion.div
           className="relative"
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: vnState === STATE.MONIKA ? characterY - 2 : characterY }}
+          initial={{ opacity: 0, y: 14, x: characterX }}
+          animate={{
+            opacity: 1,
+            y: vnState === STATE.MONIKA ? characterY - 2 : characterY,
+            x: characterX,
+          }}
           transition={{ duration: 0.35 }}
           style={{ scale: characterScale, willChange: "transform, opacity" }}
         >

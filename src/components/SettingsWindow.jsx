@@ -5,11 +5,9 @@ import { useLanguage } from '../contexts/LanguageContext';
 const CONFIGURABLE_TOOLS = [
   'cancel_reminder',
   'control_light',
-  'create_project',
   'clear_work_memory',
   'notes_set',
   'run_web_agent',
-  'switch_project',
   'write_file'
 ];
 

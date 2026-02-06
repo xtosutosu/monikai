@@ -49,7 +49,7 @@ read_file_tool = {
 
 notes_get_tool = {
     "name": "notes_get",
-    "description": "Returns the current notes.md for the active project.",
+    "description": "Returns the current global notes.md.",
     "parameters": {
         "type": "OBJECT",
         "properties": {}
@@ -58,7 +58,7 @@ notes_get_tool = {
 
 notes_set_tool = {
     "name": "notes_set",
-    "description": "Overwrites notes.md for the active project with the provided content.",
+    "description": "Overwrites the global notes.md with the provided content.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
@@ -73,7 +73,7 @@ notes_set_tool = {
 
 notes_append_tool = {
     "name": "notes_append",
-    "description": "Appends content to notes.md for the active project.",
+    "description": "Appends content to the global notes.md.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
@@ -94,4 +94,3 @@ tools_list = [{"function_declarations": [
     notes_set_tool,
     notes_append_tool
 ]}]
-
