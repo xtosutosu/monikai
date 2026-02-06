@@ -12,9 +12,10 @@ dist/backend/user_memory/
 dist/backend/long_term_memory/
 data/long_term_memory
 data/user_memory/
-data/projects
+data/memory/
+data/sessions/
+data/study/
 data/settings.json
-data/personality.json
 data/reference.jpg
 
 # Node.js
