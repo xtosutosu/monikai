@@ -7,8 +7,14 @@ google-genai
 # Computer Vision & Audio
 opencv-python
 pyaudio
+sounddevice
 pillow
 mss
+# OCR (PaddleOCR, local)
+paddlepaddle
+paddleocr
+taskgroup
+exceptiongroup
 # Browser Automation
 playwright
 # Smart Home

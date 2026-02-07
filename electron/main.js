@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { spawn } = require('child_process');
 
 // Use ANGLE D3D11 backend - more stable on Windows while keeping WebGL working
@@ -71,55 +72,94 @@ function createWindow() {
     });
 }
 
+function resolvePythonCandidates() {
+    const candidates = [];
+    const envPython = process.env.MONIKAI_PYTHON;
+    if (envPython) candidates.push(envPython);
+
+    const condaPrefix = process.env.CONDA_PREFIX;
+    if (condaPrefix) {
+        const condaPy = process.platform === 'win32'
+            ? path.join(condaPrefix, 'python.exe')
+            : path.join(condaPrefix, 'bin', 'python');
+        candidates.push(condaPy);
+    }
+
+    const home = process.env.USERPROFILE || process.env.HOME;
+    const baseNames = ['miniconda3', 'anaconda3', 'Miniconda3', 'Anaconda3'];
+    if (home) {
+        baseNames.forEach(base => {
+            const envPath = process.platform === 'win32'
+                ? path.join(home, base, 'envs', 'monikai', 'python.exe')
+                : path.join(home, base, 'envs', 'monikai', 'bin', 'python');
+            candidates.push(envPath);
+        });
+    }
+
+    candidates.push('python');
+    candidates.push('python3');
+    return candidates;
+}
+
 function startPythonBackend() {
     return new Promise((resolve, reject) => {
         const scriptPath = path.join(__dirname, '../backend/server.py');
         console.log(`Starting Python backend: ${scriptPath}`);
 
-        const trySpawn = (command) => {
-            const process = spawn(command, ['-u', scriptPath], {
+        const candidates = resolvePythonCandidates();
+
+        const trySpawn = (index = 0) => {
+            if (index >= candidates.length) {
+                reject(new Error('Could not find a working Python interpreter.'));
+                return;
+            }
+
+            const command = candidates[index];
+            const isPath = command.includes('\\') || command.includes('/') || command.endsWith('.exe');
+            if (isPath && !fs.existsSync(command)) {
+                return trySpawn(index + 1);
+            }
+
+            console.log(`Starting Python backend with: ${command}`);
+            const backendProcess = spawn(command, ['-u', scriptPath], {
                 cwd: path.join(__dirname, '../backend'),
+                env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
             });
 
             let backendStarted = false;
 
-            process.stdout.on('data', (data) => {
+            backendProcess.stdout.on('data', (data) => {
                 console.log(`[Python]: ${data}`);
                 // Resolve the promise once the backend starts sending data
                 if (!backendStarted) {
                     backendStarted = true;
-                    resolve(process);
+                    resolve(backendProcess);
                 }
             });
 
-            process.stderr.on('data', (data) => {
+            backendProcess.stderr.on('data', (data) => {
                 const msg = data.toString();
                 console.error(`[Python Error]: ${msg}`);
                 // Uvicorn logs to stderr. Resolve if we see the startup message.
                 if (!backendStarted && (msg.includes('Uvicorn running') || msg.includes('Application startup complete'))) {
                     backendStarted = true;
-                    resolve(process);
+                    resolve(backendProcess);
                 }
             });
 
-            process.on('error', (err) => {
+            backendProcess.on('error', (err) => {
                 console.error(`Failed to start ${command}.`, err);
-                if (command === 'python') {
-                    console.log('Trying with python3...');
-                    trySpawn('python3');
-                } else {
-                    reject(new Error('Could not find python or python3. Please make sure Python is installed and in your PATH.'));
-                }
+                trySpawn(index + 1);
             });
 
-            process.on('close', (code) => {
+            backendProcess.on('close', (code) => {
                 if (!backendStarted) {
                     reject(new Error(`Python backend exited prematurely with code ${code}. Check logs for missing dependencies or errors.`));
                 }
             });
         };
 
-        trySpawn('python');
+        trySpawn(0);
     });
 }
 

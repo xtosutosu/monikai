@@ -4,9 +4,9 @@
   "description": "MonikAI - Monika + AI",
   "main": "electron/main.js",
   "scripts": {
-    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env NODE_OPTIONS=--no-deprecation npx electron .\"",
+    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env NODE_OPTIONS=--no-deprecation node electron/run-electron.js\"",
     "build": "vite build",
-    "start": "npx electron .",
+    "start": "node electron/run-electron.js",
     "dist": "npm run build && electron-builder"
   },
   "keywords": [],
@@ -20,6 +20,7 @@
     "lucide-react": "^0.300.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "pdfjs-dist": "^4.6.82",
     "socket.io-client": "^4.7.4",
     "tailwind-merge": "^2.2.0"
   },

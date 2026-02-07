@@ -18,12 +18,13 @@ import CameraWindow from './components/CameraWindow';
 import ScreenWindow from './components/ScreenWindow';
 import CompanionWindow from './components/CompanionWindow';
 import SessionPromptWindow from './components/SessionPromptWindow';
+import StudyWindow from './components/StudyWindow';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 
 const socket = io('http://localhost:8000');
 const { ipcRenderer } = window.require('electron');
 
-const getDefaultPositions = () => ({
+  const getDefaultPositions = () => ({
   video: { x: window.innerWidth - 230, y: window.innerHeight - 210 },
   screen: { x: window.innerWidth - 230, y: window.innerHeight - 210 },
   visualizer: { x: window.innerWidth / 2, y: window.innerHeight / 2 - 150 }, // no longer used for VN
@@ -33,8 +34,9 @@ const getDefaultPositions = () => ({
   reminders: { x: window.innerWidth - 230, y: 340 },
   notes: { x: 270, y: 360 },
   tools: { x: window.innerWidth / 2, y: window.innerHeight - 115 },
-  companion: { x: window.innerWidth / 2, y: window.innerHeight / 2 }
-});
+  companion: { x: window.innerWidth / 2, y: window.innerHeight / 2 },
+  study: { x: Math.max(420, Math.round(window.innerWidth * 0.32)), y: window.innerHeight / 2 }
+  });
 
 function AppContent() {
   const { t } = useLanguage();
@@ -89,6 +91,7 @@ function AppContent() {
 
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
+  const lastTypingEmitRef = useRef(0);
 
   const [browserData, setBrowserData] = useState({ image: null, logs: [] });
   const [confirmationRequest, setConfirmationRequest] = useState(null);
@@ -99,6 +102,7 @@ function AppContent() {
   const [showNotesWindow, setShowNotesWindow] = useState(false);
   const [showBrowserWindow, setShowBrowserWindow] = useState(false);
   const [showCompanionWindow, setShowCompanionWindow] = useState(false);
+  const [showStudyWindow, setShowStudyWindow] = useState(false);
 
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -118,6 +122,7 @@ function AppContent() {
   const lastActivityRef = useRef(Date.now());
   const sceneRef = useRef(vnScene);
   const [sceneOverrideUntil, setSceneOverrideUntil] = useState(0);
+  const prevSceneRef = useRef(null);
 
   // ---------------------------------------------------------------------
   // RESTORED STATE (must be declared BEFORE talking logic uses it)
@@ -203,8 +208,10 @@ function AppContent() {
   const [showPersonalityWindow, setShowPersonalityWindow] = useState(false);
   const [toolPermissions, setToolPermissions] = useState({});
   const [personalityState, setPersonalityState] = useState({ mood: 'neutral', affection: 0 });
-  const [sessionMode, setSessionMode] = useState({ active: false, kind: 'reflective' });
+  const [sessionMode, setSessionMode] = useState({ active: false, kind: 'auto' });
   const [sessionPromptQueue, setSessionPromptQueue] = useState([]);
+  const [studyCatalog, setStudyCatalog] = useState({ folders: [] });
+  const [studySelection, setStudySelection] = useState({ folder: '', file: '', path: '' });
 
   // ---------------------------------------------------------------------
   // Modular/Windowed State (kept for your movable windows)
@@ -224,13 +231,14 @@ function AppContent() {
     reminders: { w: 420, h: 560 },
     notes: { w: 500, h: 600 },
     companion: { w: 400, h: 500 },
+    study: { w: 1120, h: 760 },
   });
 
   const [activeDragElement, setActiveDragElement] = useState(null);
 
   // Z-Index Stacking Order (last element = highest z-index)
   const [zIndexOrder, setZIndexOrder] = useState([
-    'visualizer', 'chat', 'tools', 'video', 'screen', 'browser', 'kasa', 'reminders', 'notes', 'companion'
+    'visualizer', 'chat', 'tools', 'video', 'screen', 'browser', 'kasa', 'reminders', 'notes', 'companion', 'study'
   ]);
 
   // ---------------------------------------------------------------------
@@ -320,6 +328,45 @@ function AppContent() {
     setSessionPromptQueue(prev => prev.slice(1));
   };
 
+  const fetchStudyCatalog = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/study/catalog');
+      if (!res.ok) return;
+      const data = await res.json();
+      setStudyCatalog(data || { folders: [] });
+    } catch (err) {
+      console.error("Study catalog fetch failed:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchStudyCatalog();
+  }, []);
+
+  const handleSelectStudy = (selection) => {
+    if (!selection) return;
+    setStudySelection(selection);
+    setShowStudyWindow(true);
+    bringToFront('study');
+    if (socket) socket.emit('study_select', selection);
+  };
+
+
+  useEffect(() => {
+    if (showStudyWindow) {
+      if (!prevSceneRef.current) prevSceneRef.current = vnScene;
+      setVnScene('school');
+      setVnBackground(VN_BACKGROUNDS.school || VN_BACKGROUNDS.room);
+      setSceneOverrideUntil(Date.now() + 6 * 60 * 60 * 1000);
+    } else if (prevSceneRef.current) {
+      const prev = prevSceneRef.current;
+      setVnScene(prev);
+      setVnBackground(VN_BACKGROUNDS[prev] || VN_BACKGROUNDS.room);
+      prevSceneRef.current = null;
+      setSceneOverrideUntil(0);
+    }
+  }, [showStudyWindow]);
+
   const clearSessionPrompts = () => {
     setSessionPromptQueue([]);
   };
@@ -349,10 +396,14 @@ function AppContent() {
       const bottomPad = 16;
 
       const baseChatMax = width - sidePad * 2;
-      const sessionInset = sessionMode.active ? Math.min(180, Math.round(width * 0.12)) : 0;
+      const focusMode = sessionMode.active || showStudyWindow;
+      const focusInset = focusMode ? Math.min(360, Math.round(width * 0.26)) : 0;
       const minChatW = Math.min(520, baseChatMax);
-      const chatW = Math.min(980, baseChatMax - sessionInset);
-      const chatWFinal = Math.max(minChatW, chatW);
+      const chatWNormal = Math.min(860, baseChatMax - focusInset);
+      const chatWFocus = Math.min(640, baseChatMax - Math.min(220, focusInset));
+      const chatWFinal = focusMode
+        ? Math.max(480, chatWFocus)
+        : Math.max(minChatW, chatWNormal);
 
       // keep chat readable on small screens:
       const maxChatH = Math.min(360, Math.round(height * 0.30));
@@ -365,29 +416,58 @@ function AppContent() {
         height - bottomToolsArea - bottomPad - chatH
       );
 
-      const desiredChatX = width / 2 - Math.round(sessionInset * 0.5);
+      const desiredChatX = focusMode
+        ? width - chatWFinal / 2 - sidePad - 8
+        : width / 2 - Math.round(focusInset * 0.5);
       const minChatX = chatWFinal / 2 + sidePad;
       const maxChatX = width - chatWFinal / 2 - sidePad;
       const chatX = Math.max(minChatX, Math.min(maxChatX, desiredChatX));
 
-      setElementSizes(prev => ({
-        ...prev,
-        chat: { w: chatWFinal, h: chatH }
-      }));
+      const studyW = showStudyWindow
+        ? Math.min(Math.round(width * 0.64), width - sidePad * 2)
+        : null;
+      const studyH = showStudyWindow
+        ? Math.min(Math.round(height * 0.82), height - topBarHeight - bottomPad * 2)
+        : null;
 
-      setElementPositions(prev => ({
-        ...prev,
-        chat: { x: chatX, y: chatTop },
-        tools: { x: width / 2, y: height - 100 },
-        video: { x: width - 230, y: height - 210 },
-        screen: { x: width - 230, y: height - 210 }
-      }));
+      setElementSizes(prev => {
+        const nextSizes = {
+          ...prev,
+          chat: { w: chatWFinal, h: chatH }
+        };
+        if (showStudyWindow && studyW && studyH) {
+          nextSizes.study = { w: studyW, h: studyH };
+        }
+        return nextSizes;
+      });
+
+      setElementPositions(prev => {
+        const nextPositions = {
+          ...prev,
+          chat: { x: chatX, y: chatTop },
+          tools: { x: width / 2, y: height - 100 },
+          video: { x: width - 230, y: height - 210 },
+          screen: { x: width - 230, y: height - 210 }
+        };
+
+        if (showStudyWindow && studyW && studyH) {
+          const minStudyX = studyW / 2 + sidePad + 6;
+          const maxStudyX = width - studyW / 2 - sidePad;
+          const minStudyY = topBarHeight + studyH / 2 + 6;
+          const maxStudyY = height - studyH / 2 - bottomPad;
+          const studyX = Math.max(minStudyX, Math.min(maxStudyX, Math.round(studyW / 2 + sidePad + 6)));
+          const studyY = Math.max(minStudyY, Math.min(maxStudyY, Math.round(height * 0.47)));
+          nextPositions.study = { x: studyX, y: studyY };
+        }
+
+        return nextPositions;
+      });
     };
 
     layout();
     window.addEventListener('resize', layout);
     return () => window.removeEventListener('resize', layout);
-  }, [sessionMode.active]);
+  }, [sessionMode.active, showStudyWindow]);
 
   // ---------------------------------------------------------------------
   // Update refs when state changes
@@ -582,8 +662,15 @@ function AppContent() {
       outfitName = "School Uniform";
     }
 
+    // Study mode override: always school uniform (default) in class.
+    if (showStudyWindow) {
+      clothesFolder = 'def';
+      outfitName = "School Uniform";
+      hairStyle = 'def';
+    }
+
     return { clothesFolder, hairStyle, outfitName };
-  }, [personalityState.mood, personalityState.affection, personalityState.weather, currentHour, currentMonth, currentDay, showNotesWindow, vnScene]);
+  }, [personalityState.mood, personalityState.affection, personalityState.weather, currentHour, currentMonth, currentDay, showNotesWindow, vnScene, showStudyWindow]);
 
   // Report Visual State to Backend
   useEffect(() => {
@@ -598,9 +685,17 @@ function AppContent() {
   const masLayers = useMemo(() => {
     const mood = (personalityState.mood || 'neutral').toLowerCase();
     const { clothesFolder, hairStyle } = visualState;
+    const isStudyMode = showStudyWindow;
     
     // Determine Pose based on mood
-    const isLeaning = mood.includes('leaning') || mood.includes('mysterious') || mood.includes('foggy') || mood.includes('dream') || mood.includes('love') || mood.includes('enchanted');
+    const isLeaning = !isStudyMode && (
+      mood.includes('leaning') ||
+      mood.includes('mysterious') ||
+      mood.includes('foggy') ||
+      mood.includes('dream') ||
+      mood.includes('love') ||
+      mood.includes('enchanted')
+    );
 
     // Arm Style Logic (moved up for shared use)
     let armStyle = 'def'; // def, crossed, point, steepling, restpoint
@@ -614,6 +709,9 @@ function AppContent() {
       } else if (randomPose) {
         armStyle = randomPose;
       }
+    }
+    if (isStudyMode) {
+      armStyle = 'def';
     }
 
     // --- OUTSIDE SCENE OVERRIDE (Single Layer Standing Poses) ---
@@ -784,7 +882,7 @@ function AppContent() {
     layers.push(hairFront);
 
     return layers;
-  }, [personalityState.mood, visualState, isBlinking, randomGlance, randomPose, vnScene]);
+  }, [personalityState.mood, visualState, isBlinking, randomGlance, randomPose, vnScene, showStudyWindow]);
 
   useEffect(() => {
     if (aiSpeaking || userSpeaking) {
@@ -1031,7 +1129,7 @@ function AppContent() {
 
     socket.on('session_mode', (data) => {
       const active = !!(data && data.active);
-      const kind = data?.kind || 'reflective';
+      const kind = data?.kind || 'auto';
       setSessionMode({ active, kind });
       if (!active) {
         clearSessionPrompts();
@@ -1537,6 +1635,15 @@ function AppContent() {
     setMessages(prev => [...prev, { sender: s, text: String(text ?? ""), time: new Date().toLocaleTimeString() }]);
   };
 
+  useEffect(() => {
+    if (!socket || !inputValue) return;
+    const now = Date.now();
+    if (now - lastTypingEmitRef.current > 2000) {
+      lastTypingEmitRef.current = now;
+      socket.emit('user_activity', { text: String(inputValue).slice(0, 120) });
+    }
+  }, [inputValue, socket]);
+
   const togglePower = () => {
     if (isConnected) {
       socket.emit('stop_audio');
@@ -1567,7 +1674,7 @@ function AppContent() {
   const toggleSessionMode = () => {
     if (!isConnected) return;
     const nextActive = !sessionMode.active;
-    const kind = sessionMode.kind || 'reflective';
+    const kind = sessionMode.kind || 'auto';
     socket.emit('session_mode_set', { active: nextActive, kind });
   };
 
@@ -1814,7 +1921,9 @@ const handleSend = (e) => {
       viewportH: viewport.h,
     };
   }, [elementPositions.chat, elementSizes.chat, viewport.h]);
-  const sessionVisualShift = sessionMode.active ? Math.min(180, Math.round(viewport.w * 0.12)) : 0;
+  const focusMode = sessionMode.active || showStudyWindow;
+  const characterShift = focusMode ? Math.min(380, Math.round(viewport.w * 0.26)) : 0;
+  const characterY = focusMode ? -80 : -40;
 
   return (
     <div className="h-screen w-screen bg-black text-white/85 font-sans overflow-hidden flex flex-col relative selection:bg-white/10 selection:text-white">
@@ -1845,8 +1954,8 @@ const handleSend = (e) => {
           isAssistantSpeaking={aiSpeaking}
           isUserSpeaking={userSpeaking}
           characterScale={1.20}
-          characterY={-40}
-          characterX={sessionVisualShift}
+          characterY={characterY}
+          characterX={characterShift}
         />
         {/* Subtle VN vignette */}
         <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/55" />
@@ -1992,11 +2101,6 @@ const handleSend = (e) => {
 
       {/* Main Content (over VN background) */}
       <div className="flex-1 relative z-10">
-        {/* Floating Scope Label */}
-        <div className="absolute top-[64px] left-1/2 -translate-x-1/2 text-white/65 text-xs tracking-widest pointer-events-none z-50 bg-black/50 px-2 py-1 rounded backdrop-blur-sm border border-white/12">
-          GLOBAL
-        </div>
-
         {/* Screen Window */}
         {visionMode === 'screen' && (
           <ScreenWindow
@@ -2167,6 +2271,24 @@ const handleSend = (e) => {
           />
         )}
 
+        {/* Study Window */}
+        {showStudyWindow && (
+          <StudyWindow
+            socket={socket}
+            onClose={() => setShowStudyWindow(false)}
+            position={elementPositions.study}
+            width={elementSizes.study.w}
+            height={elementSizes.study.h}
+            onMouseDown={(e) => handleMouseDown(e, 'study')}
+            activeDragElement={activeDragElement}
+            zIndex={getZIndex('study')}
+            catalog={studyCatalog}
+            selection={studySelection}
+            onSelectStudy={handleSelectStudy}
+            onRefreshCatalog={fetchStudyCatalog}
+          />
+        )}
+
         {/* Companion Window */}
         {showCompanionWindow && (
           <CompanionWindow
@@ -2176,6 +2298,10 @@ const handleSend = (e) => {
             onMouseDown={(e) => handleMouseDown(e, 'companion')}
             activeDragElement={activeDragElement}
             zIndex={getZIndex('companion')}
+            studyCatalog={studyCatalog}
+            studySelection={studySelection}
+            onOpenStudy={handleSelectStudy}
+            onShowStudy={() => setShowStudyWindow(true)}
           />
         )}
 

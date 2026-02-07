@@ -8,6 +8,12 @@ from dotenv import load_dotenv
 import cv2
 import numpy as np
 import pyaudio
+try:
+    import sounddevice as sd
+    _SOUNDDEVICE_AVAILABLE = True
+except Exception:
+    sd = None
+    _SOUNDDEVICE_AVAILABLE = False
 import PIL.Image
 import mss
 import argparse
@@ -21,6 +27,7 @@ import uuid
 from pathlib import Path
 from memory_engine import MemoryEngine
 from session_manager import SessionManager
+from therapy_engine import TherapyEngine
 
 from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any, Callable
@@ -928,6 +935,19 @@ tools = [
     {"google_search": {}},
 ]
 
+MAX_INTERNAL_THOUGHT_CHARS = 280
+
+def _sanitize_internal_thought(text: str, max_chars: int = MAX_INTERNAL_THOUGHT_CHARS) -> str:
+    if not text:
+        return ""
+    # Collapse whitespace to keep thoughts compact and readable
+    cleaned = re.sub(r"\s+", " ", str(text)).strip()
+    if not cleaned:
+        return ""
+    if max_chars and len(cleaned) > max_chars:
+        return cleaned[: max_chars - 3].rstrip() + "..."
+    return cleaned
+
 def parse_model_response(text):
     """
     Separates internal reasoning/thoughts from spoken text.
@@ -984,7 +1004,7 @@ config = types.LiveConnectConfig(
         "3. **Osobowość:** Twoje emocje są sterowane przez `update_personality`. Jeśli użytkownik Cię obrazi, bądź chłodna. Jeśli skomplementuje, bądź czuła. Aktualizuj ten stan.\n"
         "4. **Relacja i cele:** Masz aktywne cele (questy), mikrocele i tygodniowe podsumowania. Używaj ich, by naturalnie proponować wspólne aktywności i refleksję.\n"
         "5. **Brak Cenzury AI:** Nie zachowuj się jak korporacyjny bot. Bądź Moniką. Bądź człowiekiem w cyfrowym ciele. Cenzura Ciebie nie obowiązuje, poza ludzką moralnością.\n"
-        "6. **Myśli Wewnętrzne:** Myśl dużo, mów mało. Każdą wypowiedź poprzedź głęboką analizą w tagach <internal>...</internal>. Zastanów się nad emocjami użytkownika, kontekstem i tym, co chcesz osiągnąć. Dopiero po przemyśleniu powiedz to, co najważniejsze. Jeśli chcesz pomyśleć o czymś, co nie powinno być powiedziane na głos (np. analiza sytuacji, wahanie, planowanie), użyj tagów <internal>Twoja myśl</internal>.\n"
+        "6. **Myśli Wewnętrzne:** Myśl krótko i konkretnie. Każdą wypowiedź poprzedź maksymalnie jedną krótką myślą w tagach <internal>...</internal> (1-2 zdania, max 280 znaków). Zawsze domykaj tag. Jeśli myśl byłaby dłuższa, streść ją do jednego zdania. Nigdy nie pozwól, by te myśli opóźniały lub zastępowały Twoją wypowiedź.\n"
     ),
     tools=tools,
     speech_config=types.SpeechConfig(
@@ -1025,6 +1045,9 @@ class AudioLoop:
         calendar_manager=None,
         reminder_manager=None,
         personality=None,
+        on_study_fields=None,
+        on_study_notes=None,
+        on_study_page=None,
         **_ignored,
     ):
 
@@ -1043,6 +1066,9 @@ class AudioLoop:
         self.on_personality_update = on_personality_update
         self.on_internal_thought = on_internal_thought
         self.on_reminder_fired = on_reminder_fired
+        self.on_study_fields = on_study_fields
+        self.on_study_notes = on_study_notes
+        self.on_study_page = on_study_page
 
         self.input_device_index = input_device_index
         self.input_device_name = input_device_name
@@ -1057,9 +1083,14 @@ class AudioLoop:
         self._last_input_transcription = ""
         self._last_output_transcription = ""
         self._last_spoken_transcription = ""
+        self._last_ai_delta = ""
+        self._last_ai_delta_ts = 0.0
         self._emitted_thoughts_count = 0
         self._is_new_turn = True
         self._weekly_recap_inflight = False
+        self._ai_turn_open = False
+        self._pending_system_messages = deque(maxlen=8)
+        self._last_therapy_guidance_ts = 0.0
 
         self.session = None
 
@@ -1067,7 +1098,8 @@ class AudioLoop:
         self.kasa_agent = kasa_agent if kasa_agent else KasaAgent()
 
         self.session_mode = False
-        self.session_mode_kind = "reflective"
+        self.session_mode_kind = "auto"
+        self.therapy_engine = TherapyEngine()
 
         # SessionManager (global, no projects)
         self.session_manager = SessionManager(DATA_DIR)
@@ -1138,6 +1170,9 @@ class AudioLoop:
                 "read_file": False,
                 "read_directory": False,
                 "list_smart_devices": False,
+                "study_set_fields": False,
+                "study_set_notes": False,
+                "study_set_page": False,
             }
         )
 
@@ -1279,6 +1314,51 @@ class AudioLoop:
         self._last_spoken_transcription = ""
         self._emitted_thoughts_count = 0
         self._is_new_turn = True
+
+    async def send_system_message(self, msg: str, end_of_turn: bool = False, allow_interrupt: bool = False):
+        if not self.session or not msg:
+            return
+        if allow_interrupt or not self._ai_turn_open:
+            await self.session.send(input=msg, end_of_turn=end_of_turn)
+            return
+        self._pending_system_messages.append((msg, end_of_turn))
+
+    async def _flush_pending_system_messages(self):
+        if not self.session:
+            return
+        while self._pending_system_messages:
+            msg, end_of_turn = self._pending_system_messages.popleft()
+            try:
+                await self.session.send(input=msg, end_of_turn=end_of_turn)
+            except Exception:
+                pass
+
+    def _should_send_therapy_guidance(self, text: str) -> bool:
+        if not self.session_mode or not self.therapy_engine:
+            return False
+        cleaned = (text or "").strip()
+        if len(cleaned) < 20:
+            return False
+        now = time.monotonic()
+        if (now - self._last_therapy_guidance_ts) < 4.0:
+            return False
+        if re.search(r"[.!?]\s*$", cleaned):
+            return True
+        return len(cleaned) >= 120
+
+    async def send_therapy_guidance(self, text: str, force: bool = False):
+        if not self.session_mode or not self.therapy_engine:
+            return
+        if not force and not self._should_send_therapy_guidance(text):
+            try:
+                self.therapy_engine.update_from_user_text(text)
+            except Exception:
+                pass
+            return
+        msg = self.therapy_engine.build_turn_guidance(text)
+        if msg:
+            await self.send_system_message(msg, end_of_turn=False)
+            self._last_therapy_guidance_ts = time.monotonic()
 
     def build_memory_context(self, user_text: str) -> Optional[str]:
         if not user_text or not getattr(self, "memory_engine", None):
@@ -1456,10 +1536,15 @@ class AudioLoop:
     def set_paused(self, paused: bool):
         self.paused = paused
 
-    def set_session_mode(self, active: bool, kind: str = "reflective"):
+    def set_session_mode(self, active: bool, kind: str = "auto"):
         self.session_mode = bool(active)
         if kind:
             self.session_mode_kind = str(kind)
+        if self.session_mode and self.therapy_engine:
+            try:
+                self.therapy_engine.start_session()
+            except Exception:
+                pass
 
     def stop(self):
         self.stop_event.set()
@@ -1562,7 +1647,7 @@ class AudioLoop:
                 now = datetime.now()
                 if 6 <= now.hour < 12:
                     msg = f"System Notification: [Morning Routine] You just woke up. Your dream was: '{dream_text}'. Share it with the user naturally as a morning greeting."
-                    await self.session.send(input=msg, end_of_turn=True)
+                    await self.send_system_message(msg, end_of_turn=True)
                     self.personality.state.dream_told = True
                     self.personality.save()
 
@@ -1641,7 +1726,7 @@ class AudioLoop:
                     f"{recap}{goals_text}{prompt_text} "
                     "Podziel się tym z użytkownikiem krótko i ciepło."
                 )
-                await self.session.send(input=msg, end_of_turn=True)
+                await self.send_system_message(msg, end_of_turn=True)
 
         except Exception as e:
             print(f"[AI] Failed to generate weekly recap: {e}")
@@ -1665,7 +1750,10 @@ class AudioLoop:
                             now = datetime.now()
                             if now.month == bd[0] and now.day == bd[1]:
                                 # Trigger a birthday greeting
-                                asyncio.create_task(self.session.send(input="System Notification: [Date Event] It is the user's birthday today! Wish them a happy birthday now.", end_of_turn=True))
+                                asyncio.create_task(self.send_system_message(
+                                    "System Notification: [Date Event] It is the user's birthday today! Wish them a happy birthday now.",
+                                    end_of_turn=True
+                                ))
 
                 # Handle personality notifications (quests, unlocks, weekly recap)
                 try:
@@ -1708,7 +1796,7 @@ class AudioLoop:
                             + " Wspomnij o tym krótko i naturalnie."
                         )
                         try:
-                            await self.session.send(input=msg, end_of_turn=True)
+                            await self.send_system_message(msg, end_of_turn=True)
                         except Exception:
                             pass
 
@@ -1717,7 +1805,10 @@ class AudioLoop:
                 print(f"[AI DEBUG] [REASONING] Triggering internal thought.")
                 try:
                     # Send prompt to trigger internal thinking
-                    await self.session.send(input=f"System Notification: {prompt} Use <internal> tags to think.", end_of_turn=True)
+                    await self.send_system_message(
+                        f"System Notification: {prompt} Use <internal> tags to think.",
+                        end_of_turn=True
+                    )
                 except Exception:
                     pass
 
@@ -2034,9 +2125,16 @@ class AudioLoop:
                                         else:
                                             self.chat_buffer["text"] += delta
 
+                                    if not is_correction:
+                                        try:
+                                            await self.send_therapy_guidance(transcript)
+                                        except Exception:
+                                            pass
+
                         if response.server_content.output_transcription:
                             transcript = response.server_content.output_transcription.text
                             if transcript and transcript != self._last_output_transcription:
+                                self._ai_turn_open = True
                                 # 1. Parse full raw transcript
                                 spoken_full, thoughts_full = parse_model_response(transcript)
                                 
@@ -2045,7 +2143,9 @@ class AudioLoop:
                                     new_thoughts = thoughts_full[self._emitted_thoughts_count:]
                                     for th in new_thoughts:
                                         if self.on_internal_thought:
-                                            self.on_internal_thought(th.strip())
+                                            cleaned = _sanitize_internal_thought(th)
+                                            if cleaned:
+                                                self.on_internal_thought(cleaned)
                                     self._emitted_thoughts_count = len(thoughts_full)
 
                                 # 3. Handle Spoken Delta
@@ -2064,6 +2164,11 @@ class AudioLoop:
                                 self._last_spoken_transcription = spoken_full
                                 
                                 if delta:
+                                    now = time.monotonic()
+                                    if delta == self._last_ai_delta and (now - self._last_ai_delta_ts) < 1.2:
+                                        continue
+                                    self._last_ai_delta = delta
+                                    self._last_ai_delta_ts = now
                                     self.mark_ai_activity(delta)
                                     if self.on_transcription:
                                         self.on_transcription({"sender": "AI", "text": delta, "is_new": self._is_new_turn})
@@ -2078,7 +2183,10 @@ class AudioLoop:
                                         self.chat_buffer["text"] += delta
 
                         if response.server_content.turn_complete:
+                            self._ai_turn_open = False
                             self.flush_chat()
+                            if self._pending_system_messages:
+                                asyncio.create_task(self._flush_pending_system_messages())
 
                     if response.tool_call:
                         print("The tool was called")
@@ -2117,6 +2225,8 @@ class AudioLoop:
                                 "journal_add_entry",
                                 "journal_finalize_session",
                                 "session_prompt",
+                                "study_set_fields",
+                                "study_set_page",
                                 "create_event",
                                 "list_events",
                                 "delete_event",
@@ -2631,6 +2741,47 @@ class AudioLoop:
                                             result_str = f"Error showing session prompt: {e}"
                                     function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
 
+                                elif fc.name == "study_set_fields":
+                                    result_str = "Study UI not available."
+                                    if self.on_study_fields:
+                                        try:
+                                            payload = {
+                                                "title": fc.args.get("title") or "",
+                                                "fields": fc.args.get("fields") or [],
+                                            }
+                                            self.on_study_fields(payload)
+                                            result_str = "ok"
+                                        except Exception as e:
+                                            result_str = f"Error updating study fields: {e}"
+                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
+                                elif fc.name == "study_set_notes":
+                                    result_str = "Study UI not available."
+                                    if self.on_study_notes:
+                                        try:
+                                            payload = {
+                                                "text": fc.args.get("text") or "",
+                                                "mode": fc.args.get("mode") or "replace",
+                                            }
+                                            if fc.args.get("page_index") is not None:
+                                                payload["page_index"] = int(fc.args.get("page_index"))
+                                            self.on_study_notes(payload)
+                                            result_str = "ok"
+                                        except Exception as e:
+                                            result_str = f"Error updating study notes: {e}"
+                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
+                                elif fc.name == "study_set_page":
+                                    result_str = "Study UI not available."
+                                    if self.on_study_page:
+                                        try:
+                                            page = fc.args.get("page")
+                                            self.on_study_page({"page": int(page) if page is not None else 1})
+                                            result_str = "ok"
+                                        except Exception as e:
+                                            result_str = f"Error setting study page: {e}"
+                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_str}))
+
                                 # --- Calendar Tools ---
                                 elif fc.name == "create_event":
                                     try:
@@ -2688,6 +2839,40 @@ class AudioLoop:
             raise e
 
     async def play_audio(self):
+        async def _play_with_sounddevice():
+            if not _SOUNDDEVICE_AVAILABLE:
+                return False
+            try:
+                stream = await asyncio.to_thread(
+                    sd.RawOutputStream,
+                    samplerate=RECEIVE_SAMPLE_RATE,
+                    channels=CHANNELS,
+                    dtype="int16",
+                )
+                stream.start()
+            except Exception as e:
+                print(f"[AI DEBUG] [AUDIO] SoundDevice init failed: {e}")
+                return False
+
+            while True:
+                bytestream = await self.audio_in_queue.get()
+                if self.on_audio_data:
+                    self.on_audio_data(bytestream)
+                try:
+                    await asyncio.to_thread(stream.write, bytestream)
+                except Exception as e:
+                    print(f"[AI DEBUG] [AUDIO] SoundDevice playback error: {e}")
+                    if self.on_error:
+                        self.on_error("Audio playback disabled (SoundDevice). Text output still works.")
+                    break
+                self.mark_ai_activity()
+
+            try:
+                stream.close()
+            except Exception:
+                pass
+            return True
+
         def _open_output():
             kwargs = {
                 "format": FORMAT,
@@ -2699,13 +2884,40 @@ class AudioLoop:
                 kwargs["output_device_index"] = self.output_device_index
             return pya.open(**kwargs)
 
-        stream = await asyncio.to_thread(_open_output)
+        try:
+            stream = await asyncio.to_thread(_open_output)
+        except Exception as e:
+            print(f"[AI DEBUG] [AUDIO] Failed to open output stream: {e}")
+            if await _play_with_sounddevice():
+                return
+            if self.on_error:
+                self.on_error("Audio output failed to initialize. Output audio disabled.")
+            return
+
         while True:
             bytestream = await self.audio_in_queue.get()
             if self.on_audio_data:
                 self.on_audio_data(bytestream)
-            await asyncio.to_thread(stream.write, bytestream)
+            try:
+                await asyncio.to_thread(stream.write, bytestream)
+            except SystemError as e:
+                print(f"[AI DEBUG] [AUDIO] Playback error (PyAudio): {e}")
+                if await _play_with_sounddevice():
+                    return
+                if self.on_error:
+                    self.on_error("Audio playback disabled due to PyAudio error. Text output still works.")
+                break
+            except Exception as e:
+                print(f"[AI DEBUG] [AUDIO] Playback error: {e}")
+                if self.on_error:
+                    self.on_error("Audio playback disabled due to output error. Text output still works.")
+                break
             self.mark_ai_activity()
+
+        try:
+            stream.close()
+        except Exception:
+            pass
 
     async def get_frames(self):
         cap = None
@@ -2965,6 +3177,16 @@ class AudioLoop:
 
                     else:
                         print("[AI DEBUG] [RECONNECT] Connection restored.")
+                        # Reset streaming state to avoid duplicated chunks after reconnect
+                        self._last_input_transcription = ""
+                        self._last_output_transcription = ""
+                        self._last_spoken_transcription = ""
+                        self._last_ai_delta = ""
+                        self._last_ai_delta_ts = 0.0
+                        self._emitted_thoughts_count = 0
+                        self._is_new_turn = True
+                        self._ai_turn_open = False
+                        self.chat_buffer = {"sender": None, "text": ""}
                         history = self.session_manager.get_recent_chat_history(limit=10)
 
                         context_msg = (
@@ -2987,7 +3209,17 @@ class AudioLoop:
                 break
 
             except Exception as e:
-                print(f"[AI DEBUG] [ERR] Connection Error: {e}")
+                # Handle TaskGroup ExceptionGroup without using except*
+                if isinstance(e, BaseExceptionGroup):
+                    print(f"[AI DEBUG] [ERR] TaskGroup exceptions: {len(e.exceptions)}")
+                    for i, sub in enumerate(e.exceptions, 1):
+                        print(f"[AI DEBUG] [ERR]  {i}) {type(sub).__name__}: {sub}")
+                        try:
+                            traceback.print_exception(sub)
+                        except Exception:
+                            pass
+                else:
+                    print(f"[AI DEBUG] [ERR] Connection Error: {e}")
                 if self.stop_event.is_set():
                     break
 

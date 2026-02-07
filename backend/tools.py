@@ -94,3 +94,60 @@ tools_list = [{"function_declarations": [
     notes_set_tool,
     notes_append_tool
 ]}]
+
+study_set_fields_tool = {
+    "name": "study_set_fields",
+    "description": "Updates the Japanese study fields UI (dynamic answer inputs).",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "title": {"type": "STRING", "description": "Optional title for the exercise."},
+            "fields": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "key": {"type": "STRING", "description": "Field key/id."},
+                        "label": {"type": "STRING", "description": "Field label."},
+                        "type": {"type": "STRING", "description": "text | textarea"},
+                        "placeholder": {"type": "STRING", "description": "Placeholder text."},
+                        "value": {"type": "STRING", "description": "Optional prefill value."}
+                    }
+                }
+            }
+        },
+        "required": ["fields"]
+    }
+}
+
+tools_list[0]["function_declarations"].append(study_set_fields_tool)
+
+study_set_page_tool = {
+    "name": "study_set_page",
+    "description": "Sets the current PDF page in the Japanese study viewer.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "page": {"type": "INTEGER", "description": "1-based page number."}
+        },
+        "required": ["page"]
+    }
+}
+
+tools_list[0]["function_declarations"].append(study_set_page_tool)
+
+study_set_notes_tool = {
+    "name": "study_set_notes",
+    "description": "Updates the study scratchpad notes (replace or append).",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "text": {"type": "STRING", "description": "Notes content to write."},
+            "mode": {"type": "STRING", "description": "replace | append"},
+            "page_index": {"type": "INTEGER", "description": "Optional scratchpad page index."}
+        },
+        "required": ["text"]
+    }
+}
+
+tools_list[0]["function_declarations"].append(study_set_notes_tool)

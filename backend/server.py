@@ -5,10 +5,19 @@ import asyncio
 # MUST BE SET BEFORE OTHER IMPORTS
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 import socketio
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 import asyncio
 from contextlib import asynccontextmanager
 import threading
@@ -18,6 +27,9 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
+
+from study_reader import StudyReader
+from study_ocr import ocr_image_bytes
 from dataclasses import asdict
 
 
@@ -71,6 +83,10 @@ def _determine_sprite(state_dict: dict) -> str:
     return f"monika_{variant}"
 
 
+
+
+MAIN_LOOP = None
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Code to run on startup
@@ -78,6 +94,8 @@ async def lifespan(app: FastAPI):
     print(f"[SERVER DEBUG] Python Version: {sys.version}")
     try:
         loop = asyncio.get_running_loop()
+        global MAIN_LOOP
+        MAIN_LOOP = loop
         print(f"[SERVER DEBUG] Running Loop: {type(loop)}")
         policy = asyncio.get_event_loop_policy()
         print(f"[SERVER DEBUG] Current Policy: {type(policy)}")
@@ -134,7 +152,15 @@ async def lifespan(app: FastAPI):
         hearts = "❤️" * full + "🤍" * (10 - full)
         data["affection_hearts"] = f"{hearts} ({score:.1f}/10)"
         
-        asyncio.create_task(sio.emit('personality_status', data))
+        async def _emit():
+            await sio.emit('personality_status', data)
+        try:
+            if MAIN_LOOP and MAIN_LOOP.is_running():
+                asyncio.run_coroutine_threadsafe(_emit(), MAIN_LOOP)
+            else:
+                asyncio.create_task(_emit())
+        except Exception as e:
+            print(f"[SERVER] Failed to emit personality_status: {e}")
     
     personality_system = monikai.PersonalitySystem(storage_dir=user_memory_dir, on_update=on_personality_update_server)
     print("[SERVER] Personality System initialized.")
@@ -142,8 +168,15 @@ async def lifespan(app: FastAPI):
     yield
 
 # Create a Socket.IO server
-sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
+sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*', max_http_buffer_size=25 * 1024 * 1024)
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app_socketio = socketio.ASGIApp(sio, app)
 
 import signal
@@ -177,7 +210,16 @@ BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = BASE_DIR.parent / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = DATA_DIR / "settings.json"
+STUDY_DIR = DATA_DIR / "study"
 last_start_params = {}
+
+
+def _safe_study_path(rel_path: str) -> Path:
+    raw = (rel_path or "").replace("\\", "/").lstrip("/")
+    candidate = (STUDY_DIR / raw).resolve()
+    if STUDY_DIR not in candidate.parents and candidate != STUDY_DIR:
+        raise HTTPException(status_code=400, detail="Invalid study path.")
+    return candidate
 
 DEFAULT_SETTINGS = {
     "face_auth_enabled": False, # Default OFF as requested
@@ -215,15 +257,15 @@ DEFAULT_SETTINGS = {
             "cooldown_sec": 1800,
             "min_ai_quiet_sec": 60,
             "max_per_session": 3,
-            "max_per_hour": 5,
+            "max_per_hour": 4,
             "topic_memory_size": 6,
-            "score_threshold": 0.95,
+            "score_threshold": 0.98,
             "quiet_hours_enabled": True,
             "quiet_hours_start": "22:00",
             "quiet_hours_end": "06:00",
             "adaptive_enabled": True,
-            "adaptive_backoff_step": 0.5,
-            "adaptive_max_multiplier": 3.0,
+            "adaptive_backoff_step": 0.7,
+            "adaptive_max_multiplier": 4.0,
             "recent_user_memory_size": 3,
             "recent_user_max_chars": 160
         },
@@ -235,6 +277,7 @@ DEFAULT_SETTINGS = {
 }
 
 SETTINGS = DEFAULT_SETTINGS.copy()
+STUDY_READER = StudyReader()
 
 def load_settings():
     global SETTINGS
@@ -277,6 +320,42 @@ kasa_agent = KasaAgent(known_devices=SETTINGS.get("kasa_devices"))
 @app.get("/status")
 async def status():
     return {"status": "running", "service": "MonikAI Backend"}
+
+
+@app.get("/study/catalog")
+async def study_catalog():
+    if not STUDY_DIR.exists():
+        return {"folders": []}
+    folders = []
+    for folder in sorted([p for p in STUDY_DIR.iterdir() if p.is_dir()]):
+        files = []
+        for f in sorted(folder.glob("*.pdf")):
+            name = f.name
+            is_answer_key = "answer key" in name.lower()
+            rel = f.relative_to(STUDY_DIR).as_posix()
+            files.append({
+                "name": name,
+                "path": rel,
+                "is_answer_key": is_answer_key,
+            })
+        if files:
+            folders.append({"name": folder.name, "files": files})
+    return {"folders": folders}
+
+
+@app.get("/study/file")
+async def study_file(path: str):
+    safe_path = _safe_study_path(path)
+    if not safe_path.exists() or safe_path.suffix.lower() != ".pdf":
+        raise HTTPException(status_code=404, detail="File not found")
+    if "answer key" in safe_path.name.lower():
+        raise HTTPException(status_code=403, detail="Answer key is restricted")
+    headers = {"Content-Disposition": f'inline; filename="{safe_path.name}"'}
+    return FileResponse(
+        str(safe_path),
+        media_type="application/pdf",
+        headers=headers,
+    )
 
 @sio.event
 async def connect(sid, environ):
@@ -483,6 +562,24 @@ async def start_audio(sid, data=None):
         except Exception as e:
             print(f"[SERVER] Failed to emit reminders_list update: {e}")
 
+    def on_study_fields(payload):
+        try:
+            asyncio.create_task(sio.emit('study_fields', payload))
+        except Exception as e:
+            print(f"[SERVER] Failed to emit study_fields: {e}")
+
+    def on_study_notes(payload):
+        try:
+            asyncio.create_task(sio.emit('study_notes', payload))
+        except Exception as e:
+            print(f"[SERVER] Failed to emit study_notes: {e}")
+
+    def on_study_page(payload):
+        try:
+            asyncio.create_task(sio.emit('study_page', payload))
+        except Exception as e:
+            print(f"[SERVER] Failed to emit study_page: {e}")
+
     # Initialize MonikAI
     try:
         video_mode = "none"
@@ -509,6 +606,9 @@ async def start_audio(sid, data=None):
             on_calendar_update=on_calendar_update,
             on_personality_update=on_personality_update,
             on_internal_thought=on_internal_thought,
+            on_study_fields=on_study_fields,
+            on_study_notes=on_study_notes,
+            on_study_page=on_study_page,
 
             input_device_index=device_index,
             input_device_name=device_name,
@@ -965,6 +1065,8 @@ async def user_input(sid, data):
         sent_visual = False
         max_visual_age_sec = 2.0
         latest_age = None
+        study_payload = None
+        study_meta = {}
 
         # Mark user activity (prevents idle nudges + updates topic memory)
         try:
@@ -1023,7 +1125,52 @@ async def user_input(sid, data):
                 except Exception as e:
                     print(f"[SERVER DEBUG] Failed to send attachment payload: {e}")
 
-        if audio_loop and getattr(audio_loop, "_latest_image_payload", None):
+        study_payload, study_meta = STUDY_READER.get_latest_image(max_age_sec=45.0)
+
+        if not study_payload and audio_loop and getattr(audio_loop, "video_mode", None) == "screen":
+            try:
+                await audio_loop.refresh_latest_frame(min_age_sec=0.5)
+            except Exception:
+                pass
+
+        if study_payload and not sent_visual:
+            try:
+                page = study_meta.get("page")
+                page_label = study_meta.get("page_label")
+                folder = study_meta.get("folder")
+                file = study_meta.get("file")
+                label_note = f" (book page {page_label})" if page_label else ""
+                meta_msg = (
+                    "System Notification: [Study] "
+                    f"Use the attached study page image for the user's question. "
+                    f"Current page: {page}{label_note} from {folder}/{file}. "
+                    "Do not use prior knowledge about the textbook. "
+                    "Do not guess; if the image is unreadable, say you cannot read it."
+                )
+                await audio_loop.session.send(input=meta_msg, end_of_turn=False)
+                await audio_loop.session.send(input=study_payload, end_of_turn=False)
+                sent_visual = True
+
+                ocr_text, ocr_meta = STUDY_READER.get_latest_text(max_age_sec=45.0)
+                if ocr_text and ocr_meta:
+                    if ocr_meta.get("page") == page and ocr_meta.get("file") == file:
+                        ocr_msg = f"System Notification: [Study OCR] Text snippet for this page: {ocr_text}"
+                        await audio_loop.session.send(input=ocr_msg, end_of_turn=False)
+
+                tiles, tiles_meta = STUDY_READER.get_latest_tiles(max_age_sec=45.0)
+                if tiles and tiles_meta:
+                    if tiles_meta.get("page") == page and tiles_meta.get("file") == file:
+                        tiles_msg = (
+                            "System Notification: [Study] Zoom tiles are attached for small text. "
+                            "Use them to read precise content. Do not guess."
+                        )
+                        await audio_loop.session.send(input=tiles_msg, end_of_turn=False)
+                        for payload in tiles:
+                            await audio_loop.session.send(input=payload, end_of_turn=False)
+            except Exception as e:
+                print(f"[SERVER DEBUG] Failed to send study page image: {e}")
+
+        if not sent_visual and audio_loop and getattr(audio_loop, "_latest_image_payload", None):
             if getattr(audio_loop, "_latest_image_ts", None):
                 latest_age = time.time() - audio_loop._latest_image_ts
             if latest_age is None or latest_age <= max_visual_age_sec:
@@ -1045,6 +1192,13 @@ async def user_input(sid, data):
             except Exception:
                 pass
 
+        # Therapy guidance (auto) for session mode
+        if text and audio_loop and getattr(audio_loop, "send_therapy_guidance", None) and getattr(audio_loop, "session_mode", False):
+            try:
+                await audio_loop.send_therapy_guidance(text, force=False)
+            except Exception:
+                pass
+
         # Inject memory context (global memory engine)
         if text and audio_loop and getattr(audio_loop, "build_memory_context", None):
             try:
@@ -1055,14 +1209,22 @@ async def user_input(sid, data):
                 pass
                 
         if text:
-            await audio_loop.session.send(input=text, end_of_turn=True)
-            print(f"[SERVER DEBUG] Message sent to model successfully.")
+            try:
+                await audio_loop.session.send(input=text, end_of_turn=True)
+                print(f"[SERVER DEBUG] Message sent to model successfully.")
+            except Exception as e:
+                print(f"[SERVER DEBUG] Failed to send message to model: {e}")
+                await sio.emit('status', {'msg': 'Connection lost. Reconnecting...'})
         else:
-            await audio_loop.session.send(
-                input="System Notification: User sent attachments without additional text.",
-                end_of_turn=True,
-            )
-            print(f"[SERVER DEBUG] Attachments-only message sent to model.")
+            try:
+                await audio_loop.session.send(
+                    input="System Notification: User sent attachments without additional text.",
+                    end_of_turn=True,
+                )
+                print(f"[SERVER DEBUG] Attachments-only message sent to model.")
+            except Exception as e:
+                print(f"[SERVER DEBUG] Failed to send attachments-only message: {e}")
+                await sio.emit('status', {'msg': 'Connection lost. Reconnecting...'})
 
 import json
 from datetime import datetime
@@ -1078,6 +1240,15 @@ async def video_frame(sid, data):
         # We don't await this because we don't want to block the socket handler
         # But send_frame is async, so we create a task
         asyncio.create_task(audio_loop.send_frame(image_data))
+
+
+@sio.event
+async def user_activity(sid, data):
+    try:
+        text = (data or {}).get("text") or ""
+        audio_loop_mark_user_activity(audio_loop, text)
+    except Exception:
+        pass
 
 @sio.event
 async def save_memory(sid, data):
@@ -1180,6 +1351,46 @@ def _resolve_memory_page(path: str) -> Path:
         raise ValueError("Path outside memory pages.")
     return p
 
+def _list_memory_pages() -> list[dict]:
+    base = DATA_DIR / "memory" / "pages"
+    base.mkdir(parents=True, exist_ok=True)
+    pages = []
+
+    def _extract_title(path: Path) -> str:
+        try:
+            with path.open("r", encoding="utf-8", errors="ignore") as f:
+                for _ in range(40):
+                    line = f.readline()
+                    if not line:
+                        break
+                    text = line.strip()
+                    if not text:
+                        continue
+                    if text.startswith("#"):
+                        cleaned = text.lstrip("#").strip()
+                        if cleaned:
+                            return cleaned[:120]
+                    return text[:120]
+        except Exception:
+            pass
+        return path.stem
+
+    for p in base.rglob("*"):
+        if not p.is_file():
+            continue
+        try:
+            rel = p.relative_to(base).as_posix()
+        except Exception:
+            rel = str(p).replace("\\", "/")
+        category = rel.split("/")[0] if "/" in rel else "root"
+        pages.append({
+            "path": rel,
+            "title": _extract_title(p),
+            "category": category,
+        })
+    pages.sort(key=lambda x: (x.get("title", "").lower(), x.get("path", "")))
+    return pages
+
 @sio.event
 async def notes_get(sid):
     text = _read_notes_text()
@@ -1261,22 +1472,18 @@ async def journal_finalize(sid, data):
 @sio.event
 async def session_mode_set(sid, data):
     try:
+        from session_modes import get_session_mode_message, DEFAULT_KIND
+
         active = bool((data or {}).get("active", False))
-        kind = (data or {}).get("kind") or "reflective"
+        # Always keep session mode in AUTO so Monika can decide depth/pace.
+        kind = DEFAULT_KIND
         if audio_loop and getattr(audio_loop, "set_session_mode", None):
             audio_loop.set_session_mode(active=active, kind=kind)
         await sio.emit('session_mode', {'active': active, 'kind': kind})
 
         if audio_loop and audio_loop.session:
             if active:
-                msg = (
-                    "System Notification: Session mode enabled. "
-                    "Be reflective, warm, and attentive. Ask one question at a time, "
-                    "invite the user to share freely (complaints, venting, wins). "
-                    "Offer exercises or reflections only if it feels right. "
-                    "If an exercise is useful, open a prompt via session_prompt. "
-                    "Avoid clinical jargon and avoid diagnosing."
-                )
+                msg = get_session_mode_message(kind)
             else:
                 msg = (
                     "System Notification: Session mode disabled. "
@@ -1284,7 +1491,10 @@ async def session_mode_set(sid, data):
                     "Call journal_finalize_session with summary + reflections. "
                     "Do NOT show the summary to the user."
                 )
-            await audio_loop.session.send(input=msg, end_of_turn=False)
+            if hasattr(audio_loop, "send_system_message"):
+                await audio_loop.send_system_message(msg, end_of_turn=False)
+            else:
+                await audio_loop.session.send(input=msg, end_of_turn=False)
     except Exception as e:
         await sio.emit('error', {'msg': f"Failed to set session mode: {e}"}, room=sid)
 
@@ -1336,10 +1546,16 @@ async def session_exercise_submit(sid, data):
 
         if audio_loop and audio_loop.session:
             try:
-                await audio_loop.session.send(
-                    input=f"System Notification: The user completed an exercise '{title}'. You can respond briefly and empathetically.",
-                    end_of_turn=False,
-                )
+                if hasattr(audio_loop, "send_system_message"):
+                    await audio_loop.send_system_message(
+                        f"System Notification: The user completed an exercise '{title}'. You can respond briefly and empathetically.",
+                        end_of_turn=False,
+                    )
+                else:
+                    await audio_loop.session.send(
+                        input=f"System Notification: The user completed an exercise '{title}'. You can respond briefly and empathetically.",
+                        end_of_turn=False,
+                    )
             except Exception:
                 pass
     except Exception as e:
@@ -1396,6 +1612,280 @@ async def session_sketch_save(sid, data):
     except Exception as e:
         await sio.emit('error', {'msg': f"Failed to save sketch: {e}"}, room=sid)
 
+
+@sio.event
+async def study_select(sid, data):
+    try:
+        folder = (data or {}).get("folder") or ""
+        file = (data or {}).get("file") or ""
+        rel_path = (data or {}).get("path") or ""
+        if not rel_path:
+            return
+
+        safe_path = _safe_study_path(rel_path)
+        if not safe_path.exists():
+            return
+
+        answer_keys = []
+        try:
+            for f in safe_path.parent.glob("*.pdf"):
+                if "answer key" in f.name.lower():
+                    answer_keys.append(f)
+        except Exception:
+            answer_keys = []
+
+        if audio_loop and getattr(audio_loop, "session", None):
+            ak_list = ", ".join([str(p) for p in answer_keys]) if answer_keys else "(none found)"
+            msg = (
+                "System Notification: [Study] "
+                f"User opened: {folder}/{file}. "
+                f"Answer key files (for your use only): {ak_list}. "
+                "Do not reveal the answer key unless the user explicitly asks. "
+                "You can create answer fields with the study_set_fields tool and change pages with study_set_page. "
+                "When asked about page contents, rely on the provided page text snippet and/or attached page image; if none is available, say you cannot see that page."
+            )
+            if hasattr(audio_loop, "send_system_message"):
+                await audio_loop.send_system_message(msg, end_of_turn=False)
+            else:
+                await audio_loop.session.send(input=msg, end_of_turn=False)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Study select failed: {e}"}, room=sid)
+
+
+@sio.event
+async def study_answers_submit(sid, data):
+    try:
+        if not audio_loop or not getattr(audio_loop, "session", None):
+            return
+        folder = (data or {}).get("folder") or ""
+        file = (data or {}).get("file") or ""
+        fields = (data or {}).get("fields") or {}
+        notes = (data or {}).get("notes") or ""
+        lines = [f"Study answers for: {folder}/{file}"]
+        if isinstance(fields, dict) and fields:
+            for k, v in fields.items():
+                if v is None or str(v).strip() == "":
+                    continue
+                lines.append(f"- {k}: {v}")
+        if notes:
+            lines.append("")
+            lines.append(f"Notes: {notes}")
+        msg = "System Notification: [Study] " + "\n".join(lines)
+        if hasattr(audio_loop, "send_system_message"):
+            await audio_loop.send_system_message(msg, end_of_turn=False)
+        else:
+            await audio_loop.session.send(input=msg, end_of_turn=False)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Study submit failed: {e}"}, room=sid)
+
+
+@sio.event
+async def study_page_user(sid, data):
+    try:
+        if not audio_loop or not getattr(audio_loop, "session", None):
+            return
+        folder = (data or {}).get("folder") or ""
+        file = (data or {}).get("file") or ""
+        page = (data or {}).get("page")
+        page_label = (data or {}).get("page_label") or ""
+        text = (data or {}).get("text") or ""
+        if not page:
+            return
+        print(f"[SERVER DEBUG] [Study] Page update: {folder}/{file} page={page} label={page_label} text_len={len(text or '')}")
+        snippet = ""
+        if text:
+            cleaned = " ".join(str(text).split())
+            snippet = cleaned[:1200] + ("..." if len(cleaned) > 1200 else "")
+        STUDY_READER.update_page_text(
+            text=snippet or "",
+            meta={"folder": folder, "file": file, "page": page, "page_label": page_label},
+        )
+        label_note = f" (book page {page_label})" if page_label else ""
+        msg = f"System Notification: [Study] User is viewing page {page} of {folder}/{file}{label_note}."
+        if snippet:
+            msg += f" Page text snippet: {snippet}"
+        else:
+            msg += " Page text snippet: (unavailable)"
+        if hasattr(audio_loop, "send_system_message"):
+            await audio_loop.send_system_message(msg, end_of_turn=False)
+        else:
+            await audio_loop.session.send(input=msg, end_of_turn=False)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Study page update failed: {e}"}, room=sid)
+
+
+@sio.event
+async def study_page_image(sid, data):
+    try:
+        if not audio_loop or not getattr(audio_loop, "session", None):
+            return
+        folder = (data or {}).get("folder") or ""
+        file = (data or {}).get("file") or ""
+        page = (data or {}).get("page")
+        page_label = (data or {}).get("page_label") or ""
+        mime_type = (data or {}).get("mime_type") or "image/jpeg"
+        b64 = (data or {}).get("data") or ""
+        if not page or not b64:
+            return
+        payload = {"mime_type": mime_type, "data": b64}
+        STUDY_READER.update_page_image(
+            payload=payload,
+            meta={"folder": folder, "file": file, "page": page, "page_label": page_label},
+        )
+        print(f"[SERVER DEBUG] [Study] Page image received: {folder}/{file} page={page} label={page_label} mime={mime_type} bytes={len(b64)}")
+        label_note = f" (book page {page_label})" if page_label else ""
+        msg = (
+            f"System Notification: [Study] Image of page {page} from {folder}/{file}{label_note}. "
+            "Use this image to answer questions about this page only. "
+            "Do not use prior knowledge. Do not guess if unreadable."
+        )
+        if hasattr(audio_loop, "send_system_message"):
+            await audio_loop.send_system_message(msg, end_of_turn=False)
+        else:
+            await audio_loop.session.send(input=msg, end_of_turn=False)
+        await audio_loop.session.send(input=payload, end_of_turn=False)
+
+        # OCR in background (image-only PDFs)
+        try:
+            last_text, last_meta = STUDY_READER.get_latest_text(max_age_sec=20.0)
+            if last_meta.get("page") == page and last_meta.get("file") == file and last_text:
+                return
+        except Exception:
+            pass
+
+        async def _run_ocr():
+            try:
+                import base64 as _b64
+                raw = _b64.b64decode(b64)
+                text, err = await asyncio.to_thread(ocr_image_bytes, raw)
+                if not text:
+                    if err:
+                        print(f"[SERVER DEBUG] [Study OCR] Unavailable: {err}")
+                    return
+                cleaned = " ".join(str(text).split())
+                snippet = cleaned[:2000] + ("..." if len(cleaned) > 2000 else "")
+                STUDY_READER.update_page_text(
+                    text=snippet,
+                    meta={"folder": folder, "file": file, "page": page, "page_label": page_label},
+                )
+                ocr_msg = f"System Notification: [Study OCR] Extracted text snippet: {snippet}"
+                if hasattr(audio_loop, "send_system_message"):
+                    await audio_loop.send_system_message(ocr_msg, end_of_turn=False)
+                else:
+                    await audio_loop.session.send(input=ocr_msg, end_of_turn=False)
+            except Exception as e:
+                print(f"[SERVER DEBUG] [Study OCR] Failed: {e}")
+
+        asyncio.create_task(_run_ocr())
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Study page image failed: {e}"}, room=sid)
+
+
+@sio.event
+async def study_page_share(sid, data):
+    """
+    Explicit user action: share current page with Monika for deep reading + notes/exercises.
+    Sends hi-res image, triggers OCR, and nudges model to create notes + exercises.
+    """
+    try:
+        if not audio_loop or not getattr(audio_loop, "session", None):
+            return
+        folder = (data or {}).get("folder") or ""
+        file = (data or {}).get("file") or ""
+        page = (data or {}).get("page")
+        page_label = (data or {}).get("page_label") or ""
+        mime_type = (data or {}).get("mime_type") or "image/jpeg"
+        b64 = (data or {}).get("data") or ""
+        if not page or not b64:
+            return
+        payload = {"mime_type": mime_type, "data": b64}
+        STUDY_READER.update_page_image(
+            payload=payload,
+            meta={"folder": folder, "file": file, "page": page, "page_label": page_label},
+        )
+        print(f"[SERVER DEBUG] [Study] Page shared: {folder}/{file} page={page} label={page_label} mime={mime_type} bytes={len(b64)}")
+        label_note = f" (book page {page_label})" if page_label else ""
+        msg = (
+            "System Notification: [Study Share] The user explicitly shared this page for deep reading. "
+            f"Current page: {page}{label_note} from {folder}/{file}. "
+            "Read ONLY the attached image. Do not guess if unreadable. "
+            "Then produce: (1) concise notes (4-8 bullets), (2) key vocabulary/phrases (jp + romaji + meaning if visible), "
+            "and (3) 3-6 short exercises. Use study_set_notes to fill the scratchpad, and study_set_fields to create answer inputs. "
+            "If text is unclear, ask the user to zoom/share again."
+        )
+        if hasattr(audio_loop, "send_system_message"):
+            await audio_loop.send_system_message(msg, end_of_turn=False)
+        else:
+            await audio_loop.session.send(input=msg, end_of_turn=False)
+        await audio_loop.session.send(input=payload, end_of_turn=False)
+
+        async def _run_ocr_share():
+            try:
+                import base64 as _b64
+                raw = _b64.b64decode(b64)
+                text, err = await asyncio.to_thread(ocr_image_bytes, raw)
+                if not text:
+                    if err:
+                        print(f"[SERVER DEBUG] [Study OCR] Unavailable: {err}")
+                    return
+                cleaned = " ".join(str(text).split())
+                snippet = cleaned[:2000] + ("..." if len(cleaned) > 2000 else "")
+                STUDY_READER.update_page_text(
+                    text=snippet,
+                    meta={"folder": folder, "file": file, "page": page, "page_label": page_label},
+                )
+                ocr_msg = f"System Notification: [Study OCR] Extracted text snippet: {snippet}"
+                if hasattr(audio_loop, "send_system_message"):
+                    await audio_loop.send_system_message(ocr_msg, end_of_turn=False)
+                else:
+                    await audio_loop.session.send(input=ocr_msg, end_of_turn=False)
+            except Exception as e:
+                print(f"[SERVER DEBUG] [Study OCR] Failed: {e}")
+
+        asyncio.create_task(_run_ocr_share())
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Study page share failed: {e}"}, room=sid)
+
+
+@sio.event
+async def study_page_tiles(sid, data):
+    try:
+        if not audio_loop or not getattr(audio_loop, "session", None):
+            return
+        folder = (data or {}).get("folder") or ""
+        file = (data or {}).get("file") or ""
+        page = (data or {}).get("page")
+        page_label = (data or {}).get("page_label") or ""
+        tiles = (data or {}).get("tiles") or []
+        if not page or not tiles:
+            return
+        payloads = []
+        for tile in tiles:
+            mime = tile.get("mime_type") or "image/png"
+            b64 = tile.get("data") or ""
+            if not b64:
+                continue
+            payloads.append({"mime_type": mime, "data": b64})
+        if not payloads:
+            return
+        STUDY_READER.update_page_tiles(
+            payloads=payloads,
+            meta={"folder": folder, "file": file, "page": page, "page_label": page_label},
+        )
+        label_note = f" (book page {page_label})" if page_label else ""
+        msg = (
+            f"System Notification: [Study] Received {len(payloads)} zoom tiles for page {page} "
+            f"from {folder}/{file}{label_note}. Use them to read small text."
+        )
+        if hasattr(audio_loop, "send_system_message"):
+            await audio_loop.send_system_message(msg, end_of_turn=False)
+        else:
+            await audio_loop.session.send(input=msg, end_of_turn=False)
+        for payload in payloads:
+            await audio_loop.session.send(input=payload, end_of_turn=False)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Study page tiles failed: {e}"}, room=sid)
+
 @sio.event
 async def memory_get_page(sid, data):
     try:
@@ -1410,6 +1900,32 @@ async def memory_get_page(sid, data):
         await sio.emit('error', {'msg': f"Failed to read memory page: {e}"}, room=sid)
 
 @sio.event
+async def memory_list_pages(sid, data=None):
+    try:
+        pages = _list_memory_pages()
+        await sio.emit('memory_pages', {'pages': pages}, room=sid)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Failed to list memory pages: {e}"}, room=sid)
+
+@sio.event
+async def memory_create_page(sid, data):
+    try:
+        path = (data or {}).get("path") or "notes.md"
+        title = (data or {}).get("title") or ""
+        p = _resolve_memory_page(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if not p.exists():
+            if title:
+                p.write_text(f"# {title}\n\n", encoding="utf-8")
+            else:
+                p.write_text("", encoding="utf-8")
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        await sio.emit('memory_page', {'path': str(p), 'text': text}, room=sid)
+        await sio.emit('memory_pages', {'pages': _list_memory_pages()}, room=sid)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Failed to create memory page: {e}"}, room=sid)
+
+@sio.event
 async def memory_set_page(sid, data):
     try:
         path = (data or {}).get("path") or "notes.md"
@@ -1420,6 +1936,19 @@ async def memory_set_page(sid, data):
         await sio.emit('memory_page', {'path': str(p), 'text': content or ""}, room=sid)
     except Exception as e:
         await sio.emit('error', {'msg': f"Failed to write memory page: {e}"}, room=sid)
+
+@sio.event
+async def memory_delete_page(sid, data):
+    try:
+        path = (data or {}).get("path") or ""
+        if not path:
+            return
+        p = _resolve_memory_page(path)
+        if p.exists():
+            p.unlink()
+        await sio.emit('memory_pages', {'pages': _list_memory_pages()}, room=sid)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Failed to delete memory page: {e}"}, room=sid)
 
 @sio.event
 async def memory_append_page(sid, data):
@@ -1630,18 +2159,16 @@ async def update_settings(sid, data):
             try:
                 if mode in ("screen", "camera"):
                     scope = "ekran" if mode == "screen" else "kamerę"
-                    await audio_loop.session.send(
-                        input=(
-                            f"System Notification: Włączono tryb obrazu ({mode}). "
-                            f"Masz dostęp do opisu obrazu z {scope} użytkownika (na podstawie zrzutów)."
-                        ),
-                        end_of_turn=False,
+                    msg = (
+                        f"System Notification: Włączono tryb obrazu ({mode}). "
+                        f"Masz dostęp do opisu obrazu z {scope} użytkownika (na podstawie zrzutów)."
                     )
                 else:
-                    await audio_loop.session.send(
-                        input="System Notification: Tryb obrazu został wyłączony.",
-                        end_of_turn=False,
-                    )
+                    msg = "System Notification: Tryb obrazu został wyłączony."
+                if hasattr(audio_loop, "send_system_message"):
+                    await audio_loop.send_system_message(msg, end_of_turn=False)
+                else:
+                    await audio_loop.session.send(input=msg, end_of_turn=False)
             except Exception:
                 pass
 
@@ -1697,7 +2224,10 @@ async def report_visual_state(sid, data):
                 f"Monika Outfit: {personality_system.state.current_outfit}."
             )
             print(f"[SERVER] Sending visual update to model: {update_msg}")
-            await audio_loop.session.send(input=update_msg, end_of_turn=False)
+            if hasattr(audio_loop, "send_system_message"):
+                await audio_loop.send_system_message(update_msg, end_of_turn=False)
+            else:
+                await audio_loop.session.send(input=update_msg, end_of_turn=False)
 
 @sio.event
 async def update_tool_permissions(sid, data):

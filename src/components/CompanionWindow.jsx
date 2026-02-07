@@ -1,8 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { Heart, Utensils, Gift, Smile, Book, X, RefreshCw, Check } from 'lucide-react';
 
-const CompanionWindow = ({ socket, onClose, position, onMouseDown, activeDragElement, zIndex }) => {
-  const [activeTab, setActiveTab] = useState('journal'); // activities, journal
+const CompanionWindow = ({
+  socket,
+  onClose,
+  position,
+  onMouseDown,
+  activeDragElement,
+  zIndex,
+  studyCatalog,
+  studySelection,
+  onOpenStudy,
+  onShowStudy,
+}) => {
+  const [activeTab, setActiveTab] = useState('journal'); // activities, journal, japanese
   const [journalText, setJournalText] = useState('');
   const [journalTopics, setJournalTopics] = useState('');
   const [journalMood, setJournalMood] = useState('');
@@ -51,13 +62,48 @@ const CompanionWindow = ({ socket, onClose, position, onMouseDown, activeDragEle
         if (gift) text = `*gives you a ${gift}* I got this specifically for you!`;
         break;
       case 'therapy_start':
-        text = "System Notification: The user wants a reflective, therapist-style session. Be gentle, ask one question at a time, focus on self-understanding, strengths, wounds, and growth. Suggest journaling insights without diagnosing. Keep tone warm and supportive.";
+        text = "System Notification: Start Therapy/Shadow Session. Use the Session mode therapeutic protocol (Shadow Integration, grounded tone, concrete questions, no diagnosis).";
         break;
       default:
         return;
     }
     if (text) {
       socket.emit('user_input', { text });
+    }
+  };
+
+  const folders = Array.isArray(studyCatalog?.folders) ? studyCatalog.folders : [];
+  const [selectedFolder, setSelectedFolder] = useState(studySelection?.folder || '');
+  const [selectedFile, setSelectedFile] = useState(studySelection?.file || '');
+
+  useEffect(() => {
+    if (studySelection?.folder) setSelectedFolder(studySelection.folder);
+    if (studySelection?.file) setSelectedFile(studySelection.file);
+  }, [studySelection?.folder, studySelection?.file]);
+
+  const activeFolder = folders.find(f => f.name === selectedFolder) || folders[0];
+  const visibleFiles = activeFolder ? (activeFolder.files || []).filter(f => !f.is_answer_key) : [];
+
+  useEffect(() => {
+    if (!selectedFolder && activeFolder) {
+      setSelectedFolder(activeFolder.name);
+    }
+  }, [selectedFolder, activeFolder]);
+
+  useEffect(() => {
+    if (!selectedFile && visibleFiles.length > 0) {
+      setSelectedFile(visibleFiles[0].name);
+    }
+  }, [selectedFile, visibleFiles]);
+
+  const openSelectedStudy = () => {
+    const folder = activeFolder;
+    const fileName = selectedFile || (visibleFiles[0]?.name || "");
+    if (!folder || !fileName) return;
+    const fileEntry = (folder.files || []).find(f => f.name === fileName);
+    if (fileEntry && onOpenStudy) {
+      onOpenStudy({ folder: folder.name, file: fileEntry.name, path: fileEntry.path });
+      if (onShowStudy) onShowStudy();
     }
   };
 
@@ -117,6 +163,9 @@ const CompanionWindow = ({ socket, onClose, position, onMouseDown, activeDragEle
         <button onClick={() => setActiveTab('activities')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${activeTab === 'activities' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>
           <Smile size={14} /> Activities
         </button>
+        <button onClick={() => setActiveTab('japanese')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${activeTab === 'japanese' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>
+          <Book size={14} /> Japanese
+        </button>
       </div>
 
       {/* Content */}
@@ -134,6 +183,10 @@ const CompanionWindow = ({ socket, onClose, position, onMouseDown, activeDragEle
             <button onClick={() => handleAction('gift')} className="col-span-2 flex flex-row items-center justify-center gap-3 p-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all hover:scale-[1.02] group">
               <div className="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400 group-hover:bg-purple-500/30 transition-colors"><Gift size={20} /></div>
               <span className="text-sm font-medium text-white/80">Give a Gift</span>
+            </button>
+            <button onClick={openSelectedStudy} className="col-span-2 flex flex-row items-center justify-center gap-3 p-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all hover:scale-[1.02] group">
+              <div className="w-10 h-10 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-300 group-hover:bg-cyan-500/30 transition-colors"><Book size={20} /></div>
+              <span className="text-sm font-medium text-white/80">Start Studying</span>
             </button>
           </div>
         )}
@@ -180,6 +233,36 @@ const CompanionWindow = ({ socket, onClose, position, onMouseDown, activeDragEle
             <div className="bg-black/30 rounded-lg p-3 text-xs text-white/70 font-mono whitespace-pre-wrap overflow-y-auto border border-white/5 max-h-40">
               {journalPage || "No journal entries yet."}
             </div>
+          </div>
+        )}
+
+        {activeTab === 'japanese' && (
+          <div className="flex flex-col gap-3">
+            <div className="text-xs text-white/40 uppercase tracking-wider">Study</div>
+            <select
+              value={selectedFolder}
+              onChange={(e) => setSelectedFolder(e.target.value)}
+              className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white/70 focus:outline-none focus:border-white/30"
+            >
+              {folders.map(f => (
+                <option key={f.name} value={f.name}>{f.name}</option>
+              ))}
+            </select>
+            <select
+              value={selectedFile}
+              onChange={(e) => setSelectedFile(e.target.value)}
+              className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white/70 focus:outline-none focus:border-white/30"
+            >
+              {visibleFiles.map(f => (
+                <option key={f.name} value={f.name}>{f.name}</option>
+              ))}
+            </select>
+            <button
+              onClick={openSelectedStudy}
+              className="w-full py-2 bg-white/10 hover:bg-white/20 text-white/80 rounded-lg text-sm font-medium transition-colors"
+            >
+              Open Study Window
+            </button>
           </div>
         )}
 
