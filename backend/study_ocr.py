@@ -9,7 +9,7 @@ from typing import Optional, Tuple
 
 from PIL import Image
 
-_PADDLE_OCR_INSTANCE = None
+_PADDLE_OCR_INSTANCES = {}
 _PADDLE_OCR_LOCK = threading.Lock()
 
 
@@ -26,25 +26,48 @@ def _resolve_paddle_home() -> Optional[str]:
         return None
 
 
-def _get_paddle_ocr():
-    global _PADDLE_OCR_INSTANCE
-    if _PADDLE_OCR_INSTANCE is not None:
-        return _PADDLE_OCR_INSTANCE
+def _resolve_ocr_lang(lang: Optional[str]) -> str:
+    if lang:
+        return str(lang).strip().lower()
+    env = os.getenv("STUDY_OCR_LANG")
+    if env:
+        return env.strip().lower()
+    return "japan"
+
+
+def _resolve_ocr_use_gpu(use_gpu: Optional[bool]) -> bool:
+    if use_gpu is not None:
+        return bool(use_gpu)
+    env = os.getenv("STUDY_OCR_USE_GPU", "").strip().lower()
+    if env in ("1", "true", "yes", "y", "on"):
+        return True
+    if env in ("0", "false", "no", "n", "off"):
+        return False
+    return False
+
+
+def _get_paddle_ocr(lang: Optional[str] = None, use_gpu: Optional[bool] = None):
+    lang = _resolve_ocr_lang(lang)
+    use_gpu = _resolve_ocr_use_gpu(use_gpu)
+    key = f"{lang}|{int(use_gpu)}"
+    if key in _PADDLE_OCR_INSTANCES:
+        return _PADDLE_OCR_INSTANCES[key]
     with _PADDLE_OCR_LOCK:
-        if _PADDLE_OCR_INSTANCE is not None:
-            return _PADDLE_OCR_INSTANCE
+        if key in _PADDLE_OCR_INSTANCES:
+            return _PADDLE_OCR_INSTANCES[key]
         try:
             paddle_home = _resolve_paddle_home()
             if paddle_home:
                 os.environ["PADDLEOCR_HOME"] = paddle_home
             from paddleocr import PaddleOCR  # optional dependency
-            _PADDLE_OCR_INSTANCE = PaddleOCR(
+            instance = PaddleOCR(
                 use_angle_cls=False,
-                lang="japan",
-                use_gpu=False,
+                lang=lang,
+                use_gpu=use_gpu,
                 show_log=False,
             )
-            return _PADDLE_OCR_INSTANCE
+            _PADDLE_OCR_INSTANCES[key] = instance
+            return instance
         except Exception as e:
             try:
                 print(f"[Study OCR] PaddleOCR init failed: {e}")
@@ -53,8 +76,12 @@ def _get_paddle_ocr():
             return None
 
 
-def _paddle_ocr_image_bytes(image_bytes: bytes) -> Tuple[Optional[str], Optional[str]]:
-    ocr = _get_paddle_ocr()
+def _paddle_ocr_image_bytes(
+    image_bytes: bytes,
+    lang: Optional[str] = None,
+    use_gpu: Optional[bool] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    ocr = _get_paddle_ocr(lang=lang, use_gpu=use_gpu)
     if not ocr:
         return None, "paddleocr_missing"
     try:
@@ -108,11 +135,16 @@ def _paddle_ocr_remote(image_bytes: bytes) -> Tuple[Optional[str], Optional[str]
         return None, f"paddleocr_remote_failed: {e}"
 
 
-def ocr_image_bytes(image_bytes: bytes) -> Tuple[Optional[str], Optional[str]]:
+def ocr_image_bytes(
+    image_bytes: bytes,
+    lang: Optional[str] = None,
+    use_gpu: Optional[bool] = None,
+    engine: Optional[str] = None,
+) -> Tuple[Optional[str], Optional[str]]:
     """
     Returns (text, error). If OCR is unavailable, returns (None, reason).
     """
-    mode = (os.getenv("STUDY_OCR_ENGINE") or "local").strip().lower()
+    mode = (engine or os.getenv("STUDY_OCR_ENGINE") or "local").strip().lower()
 
     if mode in ("remote", "auto"):
         text, err = _paddle_ocr_remote(image_bytes)
@@ -122,7 +154,7 @@ def ocr_image_bytes(image_bytes: bytes) -> Tuple[Optional[str], Optional[str]]:
             return None, err or "paddleocr_remote_failed"
 
     # Local PaddleOCR (default)
-    text, err = _paddle_ocr_image_bytes(image_bytes)
+    text, err = _paddle_ocr_image_bytes(image_bytes, lang=lang, use_gpu=use_gpu)
     if text:
         return text, None
 

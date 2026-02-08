@@ -24,6 +24,9 @@ const Visualizer = ({
   characterScale = 1.0,
   characterY = 10,
   characterX = 0,
+
+  headpatActive = false,
+  petpetSrc = null,
 }) => {
   const STATE = {
     IDLE: "idle",
@@ -174,6 +177,21 @@ const Visualizer = ({
                   onError={(e) => { e.target.style.display = 'none'; }}
                 />
               ))}
+              {headpatActive && petpetSrc && (
+                <img
+                  src={petpetSrc}
+                  alt=""
+                  className="absolute pointer-events-none select-none"
+                  style={{
+                    width: "28%",
+                    top: "8%",
+                    left: "50%",
+                    transform: "translate(-50%, 0)",
+                    filter: "drop-shadow(0 6px 10px rgba(0,0,0,0.25))",
+                  }}
+                  onError={(e) => { e.target.style.display = 'none'; }}
+                />
+              )}
             </div>
           ) : characterSrc && !charBroken ? (
             <img

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Mic, MicOff, Settings, Power, Video, VideoOff, Hand, Lightbulb, Globe, Monitor, FileText, CalendarDays, Heart, ClipboardList } from 'lucide-react';
+import { Mic, MicOff, Settings, Power, Video, VideoOff, Lightbulb, Globe, Monitor, FileText, CalendarDays, Heart } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 
 const Button = ({ onClick, isActive, disabled, icon: Icon, activeIcon: ActiveIcon, title, variant = 'default', onContextMenu }) => {
@@ -43,20 +43,16 @@ const ToolsModule = ({
     isMuted,
     isVideoOn,
     isScreenCaptureOn,
-    isHandTrackingEnabled,
-    sessionActive,
     showSettings,
     onTogglePower,
     onToggleMute,
     onToggleVideo,
     onToggleScreenCapture,
     onToggleSettings,
-    onToggleSession,
     onToggleReminders,
     showRemindersWindow,
     onToggleNotes,
     showNotesWindow,
-    onToggleHand,
     onToggleKasa,
     showKasaWindow,
     onToggleBrowser,
@@ -125,24 +121,6 @@ const ToolsModule = ({
                     disabled={!isConnected || isMuted}
                     icon={Monitor} 
                     title={t('tools.screen_capture')} 
-                />
-
-                <Button 
-                    onClick={onToggleHand} 
-                    isActive={isHandTrackingEnabled} 
-                    disabled={!isConnected || isMuted}
-                    icon={Hand} 
-                    title={t('tools.hand_tracking')} 
-                />
-
-                <div className="w-px bg-white/10 mx-1 my-2" />
-
-                <Button 
-                    onClick={onToggleSession} 
-                    isActive={sessionActive} 
-                    disabled={!isConnected}
-                    icon={ClipboardList} 
-                    title={t('tools.session') || "Session"} 
                 />
 
                 <div className="w-px bg-white/10 mx-1 my-2" />

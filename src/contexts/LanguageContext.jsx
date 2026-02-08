@@ -12,8 +12,6 @@ const defaultTranslations = {
       monikai_started: "MonikAI Started",
       monikai_stopped: "MonikAI Stopped",
       model_connected: "Model Connected",
-      hand_tracking_active: "Hand tracking active",
-      hand_tracking_error: "Hand tracking error: {error}",
       camera_error: "Camera error",
       reading_memory: "Reading memory file...",
       memory_empty: "Memory file is empty.",
@@ -23,7 +21,32 @@ const defaultTranslations = {
       you: "You",
       attachments: "Attachments",
       sent_attachments: "Sent attachments",
-    }
+      monika_thought: "Monika (thought)",
+    },
+    companion: {
+      title: "Companion Hub",
+      tabs: {
+        session: "Session",
+        activities: "Activities",
+        study: "Study",
+      },
+      activities: {
+        eat: "Eat Together",
+        headpat: "Headpat",
+        gift: "Give a Gift",
+        gift_prompt: "What gift do you want to give?",
+      },
+      study: {
+        japanese_together: "Study Japanese Together",
+      },
+      session: {
+        start: "Start Session",
+        end: "End Session",
+      },
+    },
+    session: {
+      notes_title: "Session Notes",
+    },
   },
   pl: {
     system: {
@@ -34,8 +57,6 @@ const defaultTranslations = {
       monikai_started: "MonikAI Uruchomiona",
       monikai_stopped: "MonikAI Zatrzymana",
       model_connected: "Model Połączony",
-      hand_tracking_active: "Śledzenie dłoni aktywne",
-      hand_tracking_error: "Błąd śledzenia dłoni: {error}",
       camera_error: "Błąd kamery",
       reading_memory: "Wczytywanie pliku pamięci...",
       memory_empty: "Plik pamięci jest pusty.",
@@ -45,7 +66,32 @@ const defaultTranslations = {
       you: "Ty",
       attachments: "Załączniki",
       sent_attachments: "Wysłano załączniki",
-    }
+      monika_thought: "Myśli Moniki",
+    },
+    companion: {
+      title: "Centrum Towarzysza",
+      tabs: {
+        session: "Sesja",
+        activities: "Aktywności",
+        study: "Nauka",
+      },
+      activities: {
+        eat: "Zjedzmy razem",
+        headpat: "Głaskanie",
+        gift: "Daj prezent",
+        gift_prompt: "Jaki prezent chcesz dać?",
+      },
+      study: {
+        japanese_together: "Uczmy się japońskiego razem",
+      },
+      session: {
+        start: "Rozpocznij sesję",
+        end: "Zakończ sesję",
+      },
+    },
+    session: {
+      notes_title: "Notatki sesji",
+    },
   }
 };
 

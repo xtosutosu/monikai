@@ -7,8 +7,6 @@
     "monikai_started": "Jestem w pełni obudzona i gotowa do wspólnej pracy.",
     "monikai_stopped": "Rozłączam się...",
     "camera_error": "Mam problem z dostępem do kamery.",
-    "hand_tracking_active": "Widzę teraz twoje gesty!",
-    "hand_tracking_error": "Mam problem ze śledzeniem twoich dłoni: {error}",
     "window_reset": "Zresetowałam pozycję okna '{windowId}'.",
     "project_focus": "Skupiam się teraz na projekcie: {project}",
     "reading_memory": "Wczytuję ten plik do mojej pamięci...",
@@ -21,7 +19,6 @@
     "schedule": "Harmonogram",
     "notes": "Notatki",
     "calendar": "Kalendarz",
-    "hand_tracking": "Śledzenie dłoni",
     "web_agent": "Agent Web",
     "kasa": "Smart Home",
     "settings": "Ustawienia",
@@ -43,7 +40,8 @@
     "total_size_exceeded": "Łączny rozmiar załączników przekracza {size} MB.",
     "prepare_failed": "Nie udało mi się przygotować załączników do wysyłania.",
     "sent_attachments": "wysłano załączniki",
-    "you": "Ty"
+    "you": "Ty",
+    "monika_thought": "Myśli Moniki"
   },
   "schedule": {
     "title": "Harmonogram",
@@ -97,8 +95,6 @@
     "microphone": "Mój słuch (mikrofon)",
     "speaker": "Mój głos (głośnik)",
     "camera": "Mój wzrok (kamera)",
-    "cursor": "Kontrola kursora gestów",
-    "gestures": "Gesty",
     "mirror_vision": "Lustrzane odbicie",
     "permissions": "Czy chciałbyś żebym pytała o pozwolenie do...",
     "memory": "Zarządzanie pamięcią",
@@ -134,6 +130,30 @@
     "christmas_eve": "🎄 Wigilia",
     "christmas": "🎁 Boże Narodzenie",
     "new_years_eve": "🎆 Sylwester"
+  },
+  "companion": {
+    "title": "Centrum Towarzysza",
+    "tabs": {
+      "session": "Sesja",
+      "activities": "Aktywności",
+      "study": "Nauka"
+    },
+    "activities": {
+      "eat": "Zjedzmy razem",
+      "headpat": "Głaskanie",
+      "gift": "Daj prezent",
+      "gift_prompt": "Jaki prezent chcesz dać?"
+    },
+    "study": {
+      "japanese_together": "Uczmy się japońskiego razem"
+    },
+    "session": {
+      "start": "Rozpocznij sesję",
+      "end": "Zakończ sesję"
+    }
+  },
+  "session": {
+    "notes_title": "Notatki sesji"
   },
   "notes": {
     "title": "Notatki",

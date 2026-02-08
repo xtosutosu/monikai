@@ -23,6 +23,7 @@ from contextlib import asynccontextmanager
 import threading
 import sys
 import os
+import base64
 import json
 import time
 import re
@@ -290,6 +291,154 @@ DEFAULT_SETTINGS = {
 SETTINGS = DEFAULT_SETTINGS.copy()
 STUDY_READER = StudyReader()
 
+SCREEN_OCR_MIN_INTERVAL_SEC = 0.8
+SCREEN_OCR_DEBOUNCE_DELAY_SEC = 0.6
+_LAST_SCREEN_OCR_TS = 0.0
+_SCREEN_OCR_DEBOUNCE_TASK = None
+
+
+def _should_run_screen_ocr(text: str) -> bool:
+    if not text:
+        return False
+    t = str(text).lower()
+    if len(t) < 3:
+        return False
+    keywords = [
+        "co pisze",
+        "co jest napisane",
+        "co jest na ekranie",
+        "jaki napis",
+        "jakie napisy",
+        "przeczytaj",
+        "odczytaj",
+        "napis",
+        "napisy",
+        "tekst",
+        "dialog",
+        "napisy",
+        "subtitle",
+        "subtitles",
+        "caption",
+        "what does it say",
+        "what's it say",
+        "what is written",
+        "what's written",
+        "read the text",
+        "read the dialog",
+        "dialog says",
+        "quest",
+        "objective",
+        "mission",
+        "hint",
+        "tooltip",
+    ]
+    return any(k in t for k in keywords)
+
+
+def _get_latest_screen_bytes():
+    payload = getattr(audio_loop, "_latest_image_payload", None)
+    if not payload or not isinstance(payload, dict):
+        return None
+    data = payload.get("data")
+    if not data:
+        return None
+    if isinstance(data, (bytes, bytearray, memoryview)):
+        return bytes(data)
+    try:
+        return base64.b64decode(data)
+    except Exception:
+        return None
+
+
+async def _send_system_notice(msg: str):
+    if not audio_loop or not getattr(audio_loop, "session", None):
+        return
+    try:
+        if hasattr(audio_loop, "send_system_message"):
+            await audio_loop.send_system_message(msg, end_of_turn=False)
+        else:
+            await audio_loop.session.send(input=msg, end_of_turn=False)
+    except Exception:
+        pass
+
+
+async def _maybe_send_screen_ocr(text: str) -> bool:
+    global _LAST_SCREEN_OCR_TS
+    if not audio_loop or not getattr(audio_loop, "session", None):
+        return False
+    if getattr(audio_loop, "video_mode", None) != "screen":
+        return False
+    if not _should_run_screen_ocr(text):
+        return False
+    now = time.time()
+    if (now - _LAST_SCREEN_OCR_TS) < SCREEN_OCR_MIN_INTERVAL_SEC:
+        return False
+    _LAST_SCREEN_OCR_TS = now
+
+    try:
+        await audio_loop.refresh_latest_frame(min_age_sec=0.05)
+    except Exception:
+        pass
+
+    raw = _get_latest_screen_bytes()
+    if not raw:
+        await _send_system_notice("System Notification: [Screen OCR] No screen frame available for OCR.")
+        return False
+
+    lang = (os.getenv("SCREEN_OCR_LANG") or "en").strip().lower()
+    engine = (os.getenv("SCREEN_OCR_ENGINE") or "local").strip().lower()
+    use_gpu_env = os.getenv("SCREEN_OCR_USE_GPU", "").strip().lower()
+    use_gpu = use_gpu_env in ("1", "true", "yes", "y", "on")
+
+    try:
+        text_out, err = await asyncio.to_thread(
+            ocr_image_bytes,
+            raw,
+            lang=lang,
+            use_gpu=use_gpu,
+            engine=engine,
+        )
+    except Exception as e:
+        await _send_system_notice(f"System Notification: [Screen OCR] Failed: {e}")
+        return False
+
+    if not text_out:
+        if err:
+            if err == "paddleocr_no_text":
+                await _send_system_notice("System Notification: [Screen OCR] No readable text found on screen.")
+            else:
+                await _send_system_notice(f"System Notification: [Screen OCR] Unavailable: {err}")
+        return False
+
+    cleaned = " ".join(str(text_out).split())
+    snippet = cleaned[:1200] + ("..." if len(cleaned) > 1200 else "")
+    await _send_system_notice(f"System Notification: [Screen OCR] Extracted text snippet: {snippet}")
+    return True
+
+
+def _schedule_screen_ocr_from_transcription():
+    global _SCREEN_OCR_DEBOUNCE_TASK
+    if _SCREEN_OCR_DEBOUNCE_TASK and not _SCREEN_OCR_DEBOUNCE_TASK.done():
+        try:
+            _SCREEN_OCR_DEBOUNCE_TASK.cancel()
+        except Exception:
+            pass
+    _SCREEN_OCR_DEBOUNCE_TASK = asyncio.create_task(_debounced_screen_ocr())
+
+
+async def _debounced_screen_ocr():
+    await asyncio.sleep(SCREEN_OCR_DEBOUNCE_DELAY_SEC)
+    if not audio_loop:
+        return
+    try:
+        buf = getattr(audio_loop, "chat_buffer", {}) or {}
+        if buf.get("sender") != "Ty":
+            return
+        text = buf.get("text") or ""
+    except Exception:
+        return
+    await _maybe_send_screen_ocr(text)
+
 def load_settings():
     global SETTINGS
     if os.path.exists(SETTINGS_FILE):
@@ -512,6 +661,8 @@ async def start_audio(sid, data=None):
                             pass
 
                     asyncio.create_task(_send_reminder())
+                else:
+                    _schedule_screen_ocr_from_transcription()
         except Exception:
             pass
 
@@ -1119,6 +1270,7 @@ async def user_input(sid, data):
             print(f"[SERVER DEBUG] Received {len(attachments)} attachment(s).")
 
         sent_visual = False
+        sent_screen_ocr = False
         max_visual_age_sec = 2.0
         latest_age = None
         study_payload = None
@@ -1256,7 +1408,13 @@ async def user_input(sid, data):
             else:
                 print(f"[SERVER DEBUG] Skipping stale visual frame (age {latest_age:.2f}s).")
 
-        if not sent_visual and audio_loop and getattr(audio_loop, "video_mode", None) in ("screen", "camera"):
+        if text:
+            try:
+                sent_screen_ocr = await _maybe_send_screen_ocr(text)
+            except Exception:
+                sent_screen_ocr = False
+
+        if not sent_visual and not sent_screen_ocr and audio_loop and getattr(audio_loop, "video_mode", None) in ("screen", "camera"):
             note = "System Notification: No visual frame was sent with this turn. If you did not receive an image, say you cannot see the user's screen/camera."
             if latest_age is not None:
                 note += f" Last visual frame age: {latest_age:.2f}s."

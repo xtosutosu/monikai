@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useMemo } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import io from 'socket.io-client';
 
 import Visualizer from './components/Visualizer';
@@ -6,13 +6,13 @@ import BrowserWindow from './components/BrowserWindow';
 import ChatModule from './components/ChatModule';
 import ToolsModule from './components/ToolsModule';
 import { X, Minus, Clock, Lightbulb, Activity, Bell, AlertCircle } from 'lucide-react';
-import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 import ConfirmationPopup from './components/ConfirmationPopup';
 import AuthLock from './components/AuthLock';
 import KasaWindow from './components/KasaWindow';
 import SettingsWindow from './components/SettingsWindow';
 import RemindersWindow from './components/RemindersWindow';
 import NotesWindow from './components/NotesWindow';
+import SessionNotesWindow from './components/SessionNotesWindow';
 import PersonalityWindow from './components/PersonalityWindow';
 import CameraWindow from './components/CameraWindow';
 import ScreenWindow from './components/ScreenWindow';
@@ -33,6 +33,7 @@ const { ipcRenderer } = window.require('electron');
   kasa: { x: window.innerWidth - 620, y: 310 },
   reminders: { x: window.innerWidth - 230, y: 340 },
   notes: { x: 270, y: 360 },
+  session_notes: { x: Math.round(window.innerWidth * 0.65), y: 360 },
   tools: { x: window.innerWidth / 2, y: window.innerHeight - 115 },
   companion: { x: window.innerWidth / 2, y: window.innerHeight / 2 },
   study: { x: Math.max(420, Math.round(window.innerWidth * 0.32)), y: window.innerHeight / 2 }
@@ -101,6 +102,7 @@ function AppContent() {
   const [showKasaWindow, setShowKasaWindow] = useState(false);
   const [showRemindersWindow, setShowRemindersWindow] = useState(false);
   const [showNotesWindow, setShowNotesWindow] = useState(false);
+  const [showSessionNotesWindow, setShowSessionNotesWindow] = useState(false);
   const [showBrowserWindow, setShowBrowserWindow] = useState(false);
   const [showCompanionWindow, setShowCompanionWindow] = useState(false);
   const [showStudyWindow, setShowStudyWindow] = useState(false);
@@ -116,6 +118,10 @@ function AppContent() {
     outside: "/vn/location/bg_outside.png",
     school: "/vn/location/bg_school.png",
   };
+  const ROOM_DAY_BG = "/vn/location/bg_room.png";
+  const ROOM_NIGHT_BG = "/vn/location/bg_room_night.png";
+  const OUTSIDE_DAY_VARIANTS = ["/vn/location/bg_outside.png", "/vn/location/bg_outside_2.png"];
+  const OUTSIDE_NIGHT_VARIANTS = ["/vn/location/bg_outside_night.png", "/vn/location/bg_outside_2_night.png"];
 
   const [vnScene, setVnScene] = useState("room");
   const [vnBackground, setVnBackground] = useState(VN_BACKGROUNDS.room);
@@ -124,6 +130,22 @@ function AppContent() {
   const sceneRef = useRef(vnScene);
   const [sceneOverrideUntil, setSceneOverrideUntil] = useState(0);
   const prevSceneRef = useRef(null);
+
+  const isNightHour = (date) => {
+    const h = date.getHours();
+    return h >= 22 || h < 6;
+  };
+
+  const resolveVnBackground = (scene, date = new Date()) => {
+    if (scene === 'room') {
+      return isNightHour(date) ? ROOM_NIGHT_BG : ROOM_DAY_BG;
+    }
+    if (scene === 'outside') {
+      const idx = date.getDate() % OUTSIDE_DAY_VARIANTS.length;
+      return isNightHour(date) ? OUTSIDE_NIGHT_VARIANTS[idx] : OUTSIDE_DAY_VARIANTS[idx];
+    }
+    return VN_BACKGROUNDS[scene] || VN_BACKGROUNDS.room;
+  };
 
   // ---------------------------------------------------------------------
   // RESTORED STATE (must be declared BEFORE talking logic uses it)
@@ -213,6 +235,13 @@ function AppContent() {
   const [sessionPromptQueue, setSessionPromptQueue] = useState([]);
   const [studyCatalog, setStudyCatalog] = useState({ folders: [] });
   const [studySelection, setStudySelection] = useState({ folder: '', file: '', path: '' });
+  useEffect(() => {
+    if (sessionMode.active) {
+      setShowSessionNotesWindow(true);
+    } else {
+      setShowSessionNotesWindow(false);
+    }
+  }, [sessionMode.active]);
 
   // ---------------------------------------------------------------------
   // Modular/Windowed State (kept for your movable windows)
@@ -231,6 +260,7 @@ function AppContent() {
     kasa: { w: 320, h: 500 },
     reminders: { w: 420, h: 560 },
     notes: { w: 500, h: 600 },
+    session_notes: { w: 620, h: 640 },
     companion: { w: 400, h: 500 },
     study: { w: 1120, h: 760 },
   });
@@ -239,25 +269,15 @@ function AppContent() {
 
   // Z-Index Stacking Order (last element = highest z-index)
   const [zIndexOrder, setZIndexOrder] = useState([
-    'visualizer', 'chat', 'tools', 'video', 'screen', 'browser', 'kasa', 'reminders', 'notes', 'companion', 'study'
+    'visualizer', 'chat', 'tools', 'video', 'screen', 'browser', 'kasa', 'reminders', 'notes', 'session_notes', 'companion', 'study'
   ]);
 
   // ---------------------------------------------------------------------
-  // Hand Control State
+  // Camera / Vision State
   // ---------------------------------------------------------------------
-  const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
-  const [isPinching, setIsPinching] = useState(false);
-  const [isHandTrackingEnabled, setIsHandTrackingEnabled] = useState(false);
-  const [cursorSensitivity, setCursorSensitivity] = useState(2.0);
   const [isCameraFlipped, setIsCameraFlipped] = useState(false);
   const [visionMode, setVisionMode] = useState(() => localStorage.getItem('video_mode') || 'none');
   const [visionFrame, setVisionFrame] = useState(null);
-
-  // Refs for Loop Access (Avoiding Closure Staleness)
-  const isHandTrackingEnabledRef = useRef(false);
-  const cursorSensitivityRef = useRef(2.0);
-  const isCameraFlippedRef = useRef(false);
-  const handLandmarkerRef = useRef(null);
 
   // Web Audio Context for Mic Visualization
   const audioContextRef = useRef(null);
@@ -267,11 +287,9 @@ function AppContent() {
 
   // Video Refs
   const videoRef = useRef(null);
-  const canvasRef = useRef(null);
   const transmissionCanvasRef = useRef(null);
   const lastFrameTimeRef = useRef(0);
   const frameCountRef = useRef(0);
-  const lastVideoTimeRef = useRef(-1);
   const lastTransmitTimeRef = useRef(0);
   const lastCameraProcessTimeRef = useRef(0);
   const CAMERA_PROCESS_INTERVAL_MS = 66;
@@ -282,11 +300,6 @@ function AppContent() {
   const elementPositionsRef = useRef(elementPositions);
   const activeDragElementRef = useRef(null);
   const lastActiveDragElementRef = useRef(null);
-  const lastWristPosRef = useRef({ x: 0, y: 0 });
-
-  // Smoothing and Snapping Refs
-  const smoothedCursorPosRef = useRef({ x: 0, y: 0 });
-  const snapStateRef = useRef({ isSnapped: false, element: null, snapPos: { x: 0, y: 0 } });
 
   // Mouse Drag Refs
   const dragOffsetRef = useRef({ x: 0, y: 0 });
@@ -370,12 +383,12 @@ function AppContent() {
     if (showStudyWindow) {
       if (!prevSceneRef.current) prevSceneRef.current = vnScene;
       setVnScene('school');
-      setVnBackground(VN_BACKGROUNDS.school || VN_BACKGROUNDS.room);
+      setVnBackground(resolveVnBackground('school', new Date()));
       setSceneOverrideUntil(Date.now() + 6 * 60 * 60 * 1000);
     } else if (prevSceneRef.current) {
       const prev = prevSceneRef.current;
       setVnScene(prev);
-      setVnBackground(VN_BACKGROUNDS[prev] || VN_BACKGROUNDS.room);
+      setVnBackground(resolveVnBackground(prev, new Date()));
       prevSceneRef.current = null;
       setSceneOverrideUntil(0);
     }
@@ -464,6 +477,60 @@ function AppContent() {
         return;
       }
 
+      if (sessionMode.active) {
+        const edgePad = sidePad + 20;
+        const bottomPadSession = bottomPad + 20;
+        const availableW = width - edgePad * 2;
+        const availableH = height - topBarHeight - bottomPadSession * 2;
+
+        const gap = Math.max(24, Math.round(Math.min(availableW, availableH) * 0.03));
+        const minChatW = 420;
+        const minNotesW = 680;
+
+        const desiredNotesW = Math.round(availableW * 0.62);
+        const maxNotesW = Math.max(320, availableW - gap - minChatW);
+        let notesW = Math.max(minNotesW, Math.min(desiredNotesW, maxNotesW));
+        let chatW = Math.round(availableW - notesW - gap);
+        if (chatW < minChatW) {
+          chatW = minChatW;
+          notesW = Math.max(320, availableW - gap - chatW);
+        }
+
+        const notesH = Math.min(availableH, Math.max(520, Math.round(availableH * 0.86)));
+        const chatH = Math.min(notesH, Math.max(260, Math.round(availableH * 0.40)));
+
+        const groupW = notesW + gap + chatW;
+        const centerX = Math.round(width / 2);
+        const topInset = Math.max(18, Math.round(availableH * 0.03));
+        let top = topBarHeight + topInset;
+        const maxTop = height - bottomPadSession - notesH;
+        if (top > maxTop) {
+          top = Math.max(topBarHeight + 8, maxTop);
+        }
+
+        const notesX = Math.round(centerX - groupW / 2 + notesW / 2);
+        const notesY = Math.round(top + notesH / 2);
+        const chatX = Math.round(notesX + notesW / 2 + gap + chatW / 2);
+        const chatTop = Math.round(top + notesH - chatH);
+
+        setElementSizes(prev => ({
+          ...prev,
+          chat: { w: chatW, h: chatH },
+          session_notes: { w: notesW, h: notesH },
+        }));
+
+        setElementPositions(prev => ({
+          ...prev,
+          chat: { x: chatX, y: chatTop },
+          session_notes: { x: notesX, y: notesY },
+          tools: { x: width / 2, y: height - 110 },
+          video: { x: width - 230, y: height - 210 },
+          screen: { x: width - 230, y: height - 210 },
+        }));
+
+        return;
+      }
+
       const baseChatMax = width - sidePad * 2;
       const focusMode = sessionMode.active || showStudyWindow;
       const focusInset = focusMode ? Math.min(360, Math.round(width * 0.26)) : 0;
@@ -544,10 +611,7 @@ function AppContent() {
   useEffect(() => {
     isModularModeRef.current = isModularMode;
     elementPositionsRef.current = elementPositions;
-    isHandTrackingEnabledRef.current = isHandTrackingEnabled;
-    cursorSensitivityRef.current = cursorSensitivity;
-    isCameraFlippedRef.current = isCameraFlipped;
-  }, [isModularMode, elementPositions, isHandTrackingEnabled, cursorSensitivity, isCameraFlipped]);
+  }, [isModularMode, elementPositions]);
   
   // Live Clock Update
   useEffect(() => {
@@ -575,7 +639,39 @@ function AppContent() {
   useEffect(() => {
     const initialScene = pickVnScene(new Date(), 0);
     setVnScene(initialScene);
-    setVnBackground(VN_BACKGROUNDS[initialScene] || VN_BACKGROUNDS.room);
+    setVnBackground(resolveVnBackground(initialScene, new Date()));
+  }, []);
+
+  useEffect(() => {
+    if (showStudyWindow) return;
+    if (vnScene !== 'outside') return;
+    if (sceneOverrideUntil && Date.now() < sceneOverrideUntil) return;
+    setVnBackground(resolveVnBackground(vnScene, currentTime));
+  }, [currentTime, vnScene, showStudyWindow, sceneOverrideUntil]);
+
+  // ---------------------------------------------------------------------
+  // Headpat Visual Override
+  // ---------------------------------------------------------------------
+  const HEADPAT_DURATION_MS = 2200;
+  const [headpatActive, setHeadpatActive] = useState(false);
+  const headpatTimerRef = useRef(null);
+
+  const triggerHeadpat = useCallback(() => {
+    setHeadpatActive(true);
+    if (headpatTimerRef.current) {
+      clearTimeout(headpatTimerRef.current);
+    }
+    headpatTimerRef.current = setTimeout(() => {
+      setHeadpatActive(false);
+    }, HEADPAT_DURATION_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (headpatTimerRef.current) {
+        clearTimeout(headpatTimerRef.current);
+      }
+    };
   }, []);
 
   // ---------------------------------------------------------------------
@@ -717,7 +813,7 @@ function AppContent() {
       } else if (!isNight && (weather.includes('sunny') || weather.includes('clear'))) {
          clothesFolder = 'sundress_white';
          outfitName = "White Sundress";
-      } else if (!isNight && (showNotesWindow || mood.includes('focus') || mood.includes('thinking') || mood.includes('learning') || mood.includes('studying'))) {
+      } else if (!isNight && (showNotesWindow || showSessionNotesWindow || mood.includes('focus') || mood.includes('thinking') || mood.includes('learning') || mood.includes('studying'))) {
          clothesFolder = 'blazerless';
          outfitName = "School Uniform (Blazerless)";
       } else if (isNight) {
@@ -739,7 +835,7 @@ function AppContent() {
     }
 
     return { clothesFolder, hairStyle, outfitName };
-  }, [personalityState.mood, personalityState.affection, personalityState.weather, currentHour, currentMonth, currentDay, showNotesWindow, vnScene, showStudyWindow]);
+  }, [personalityState.mood, personalityState.affection, personalityState.weather, currentHour, currentMonth, currentDay, showNotesWindow, showSessionNotesWindow, vnScene, showStudyWindow]);
 
   // Report Visual State to Backend
   useEffect(() => {
@@ -752,9 +848,12 @@ function AppContent() {
   }, [vnScene, visualState.outfitName, socketConnected]);
 
   const masLayers = useMemo(() => {
-    const mood = (personalityState.mood || 'neutral').toLowerCase();
+    const baseMood = (personalityState.mood || 'neutral').toLowerCase();
+    const mood = headpatActive ? `${baseMood} happy` : baseMood;
     const { clothesFolder, hairStyle } = visualState;
     const isStudyMode = showStudyWindow;
+    const forceClosedEyes = headpatActive;
+    const forceHappy = headpatActive;
     
     // Determine Pose based on mood
     const isLeaning = !isStudyMode && (
@@ -787,7 +886,9 @@ function AppContent() {
     if (vnScene === 'outside') {
       let sprite = 'ai_normal.png';
       
-      if (isLeaning) {
+      if (headpatActive) {
+        sprite = 'ai_closed_eyes.png';
+      } else if (isLeaning) {
         sprite = 'ai_leaning.png';
       } else if (isBlinking) {
         sprite = 'ai_closed_eyes.png';
@@ -846,7 +947,7 @@ function AppContent() {
     }
 
     // Random Glance Override
-    if (randomGlance && !isBlinking) {
+    if (randomGlance && !isBlinking && !forceClosedEyes) {
       // Don't override if eyes are closed (e.g. blinking or specific mood)
       if (!eyes.includes('closed')) {
         if (randomGlance === 'left') eyes = 'eyes-left.png';
@@ -855,12 +956,17 @@ function AppContent() {
     }
 
     // Blinking Override
-    if (isBlinking) {
+    if (forceClosedEyes) {
+      eyes = 'eyes-closedhappy.png';
+    } else if (isBlinking) {
       if (mood.includes('angry') || mood.includes('annoyed')) {
         eyes = 'eyes-closedangry.png';
       } else {
         eyes = 'eyes-closedhappy.png';
       }
+    }
+    if (forceHappy) {
+      mouth = 'mouth-smile.png';
     }
 
     // Hair logic:
@@ -951,7 +1057,7 @@ function AppContent() {
     layers.push(hairFront);
 
     return layers;
-  }, [personalityState.mood, visualState, isBlinking, randomGlance, randomPose, vnScene, showStudyWindow]);
+  }, [personalityState.mood, visualState, isBlinking, randomGlance, randomPose, vnScene, showStudyWindow, headpatActive]);
 
   useEffect(() => {
     if (aiSpeaking || userSpeaking) {
@@ -972,7 +1078,7 @@ function AppContent() {
     const nextScene = pickVnScene(currentTime, quietFor);
     if (nextScene !== sceneRef.current) {
       setVnScene(nextScene);
-      setVnBackground(VN_BACKGROUNDS[nextScene] || VN_BACKGROUNDS.room);
+      setVnBackground(resolveVnBackground(nextScene, currentTime));
       lastSceneChangeRef.current = now;
     }
   }, [currentTime, aiSpeaking, userSpeaking]);
@@ -1191,7 +1297,7 @@ function AppContent() {
       if (!scene || !VN_BACKGROUNDS[scene]) return;
       const ttl = typeof payload?.ttl_ms === 'number' ? payload.ttl_ms : 180000;
       setVnScene(scene);
-      setVnBackground(VN_BACKGROUNDS[scene]);
+      setVnBackground(resolveVnBackground(scene, new Date()));
       setSceneOverrideUntil(Date.now() + ttl);
       lastSceneChangeRef.current = Date.now();
     });
@@ -1240,36 +1346,6 @@ function AppContent() {
         setSelectedWebcamId(videoInputs[0].deviceId);
       }
     });
-
-    const initHandLandmarker = async () => {
-      try {
-        console.log("Initializing HandLandmarker...");
-
-        const response = await fetch('/hand_landmarker.task');
-        if (!response.ok) {
-          throw new Error(`Failed to fetch model: ${response.status} ${response.statusText}`);
-        }
-
-        const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
-        );
-
-        handLandmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: `/hand_landmarker.task`,
-            delegate: "GPU"
-          },
-          runningMode: "VIDEO",
-          numHands: 1
-        });
-
-        addMessage('System', t('system.hand_tracking_active'));
-      } catch (error) {
-        console.error("Failed to initialize HandLandmarker:", error);
-        addMessage('System', t('system.hand_tracking_error', { error: error.message }));
-      }
-    };
-    initHandLandmarker();
 
     return () => {
       socket.off('connect');
@@ -1430,21 +1506,12 @@ function AppContent() {
   };
 
   const predictWebcam = () => {
-    if (!videoRef.current || !canvasRef.current || !isVideoOnRef.current) return;
+    if (!videoRef.current || !isVideoOnRef.current) return;
 
     if (videoRef.current.readyState < 2 || videoRef.current.videoWidth === 0 || videoRef.current.videoHeight === 0) {
       requestAnimationFrame(predictWebcam);
       return;
     }
-
-    const ctx = canvasRef.current.getContext('2d');
-
-    if (canvasRef.current.width !== videoRef.current.videoWidth || canvasRef.current.height !== videoRef.current.videoHeight) {
-      canvasRef.current.width = videoRef.current.videoWidth;
-      canvasRef.current.height = videoRef.current.videoHeight;
-    }
-
-    ctx.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
 
     if (isConnected) {
       if (frameCountRef.current % 5 === 0) {
@@ -1460,178 +1527,6 @@ function AppContent() {
       }
     }
 
-    let startTimeMs = performance.now();
-
-    if (isHandTrackingEnabledRef.current && handLandmarkerRef.current && videoRef.current.currentTime !== lastVideoTimeRef.current) {
-      lastVideoTimeRef.current = videoRef.current.currentTime;
-      const results = handLandmarkerRef.current.detectForVideo(videoRef.current, startTimeMs);
-
-      if (frameCountRef.current % 100 === 0) {
-        console.log("Tracking loop running... Last result:", results.landmarks.length > 0 ? "Hand Found" : "No Hand");
-      }
-
-      if (results.landmarks && results.landmarks.length > 0) {
-        const landmarks = results.landmarks[0];
-
-        const indexTip = landmarks[8];
-        const thumbTip = landmarks[4];
-
-        const SENSITIVITY = cursorSensitivityRef.current;
-
-        const rawX = isCameraFlippedRef.current ? (1 - indexTip.x) : indexTip.x;
-
-        let normX = (rawX - 0.5) * SENSITIVITY + 0.5;
-        normX = Math.max(0, Math.min(1, normX));
-
-        let normY = (indexTip.y - 0.5) * SENSITIVITY + 0.5;
-        normY = Math.max(0, Math.min(1, normY));
-
-        const targetX = normX * window.innerWidth;
-        const targetY = normY * window.innerHeight;
-
-        const lerpFactor = 0.2;
-        smoothedCursorPosRef.current.x = smoothedCursorPosRef.current.x + (targetX - smoothedCursorPosRef.current.x) * lerpFactor;
-        smoothedCursorPosRef.current.y = smoothedCursorPosRef.current.y + (targetY - smoothedCursorPosRef.current.y) * lerpFactor;
-
-        let finalX = smoothedCursorPosRef.current.x;
-        let finalY = smoothedCursorPosRef.current.y;
-
-        const SNAP_THRESHOLD = 50;
-        const UNSNAP_THRESHOLD = 100;
-
-        if (snapStateRef.current.isSnapped) {
-          const dist = Math.sqrt(
-            Math.pow(finalX - snapStateRef.current.snapPos.x, 2) +
-            Math.pow(finalY - snapStateRef.current.snapPos.y, 2)
-          );
-
-          if (dist > UNSNAP_THRESHOLD) {
-            if (snapStateRef.current.element) {
-              snapStateRef.current.element.classList.remove('snap-highlight');
-              snapStateRef.current.element.style.boxShadow = '';
-              snapStateRef.current.element.style.backgroundColor = '';
-              snapStateRef.current.element.style.borderColor = '';
-            }
-            snapStateRef.current = { isSnapped: false, element: null, snapPos: { x: 0, y: 0 } };
-          } else {
-            finalX = snapStateRef.current.snapPos.x;
-            finalY = snapStateRef.current.snapPos.y;
-          }
-        } else {
-          const targets = Array.from(document.querySelectorAll('button, input, select, .draggable'));
-          let closest = null;
-          let minDist = Infinity;
-
-          for (const el of targets) {
-            const rect = el.getBoundingClientRect();
-            const centerX = rect.left + rect.width / 2;
-            const centerY = rect.top + rect.height / 2;
-            const dist = Math.sqrt(Math.pow(finalX - centerX, 2) + Math.pow(finalY - centerY, 2));
-
-            if (dist < minDist) {
-              minDist = dist;
-              closest = { el, centerX, centerY };
-            }
-          }
-
-          if (closest && minDist < SNAP_THRESHOLD) {
-            snapStateRef.current = {
-              isSnapped: true,
-              element: closest.el,
-              snapPos: { x: closest.centerX, y: closest.centerY }
-            };
-            finalX = closest.centerX;
-            finalY = closest.centerY;
-
-            closest.el.classList.add('snap-highlight');
-            closest.el.style.boxShadow = '0 0 20px rgba(255,255,255,0.25)';
-            closest.el.style.backgroundColor = 'rgba(255,255,255,0.06)';
-            closest.el.style.borderColor = 'rgba(255,255,255,0.35)';
-          }
-        }
-
-        setCursorPos({ x: finalX, y: finalY });
-
-        const distance = Math.sqrt(
-          Math.pow(indexTip.x - thumbTip.x, 2) + Math.pow(indexTip.y - thumbTip.y, 2)
-        );
-
-        const isPinchNow = distance < 0.05;
-
-        if (isPinchNow && !isPinching) {
-          console.log("Click triggered at", finalX, finalY);
-
-          const el = document.elementFromPoint(finalX, finalY);
-          if (el) {
-            const clickable = el.closest('button, input, a, [role="button"]');
-            if (clickable && typeof clickable.click === 'function') {
-              clickable.click();
-            } else if (typeof el.click === 'function') {
-              el.click();
-            }
-          }
-        }
-        setIsPinching(isPinchNow);
-
-        const isFingerFolded = (tipIdx, mcpIdx) => {
-          const tip = landmarks[tipIdx];
-          const mcp = landmarks[mcpIdx];
-          const wrist = landmarks[0];
-          const distTip = Math.sqrt(Math.pow(tip.x - wrist.x, 2) + Math.pow(tip.y - wrist.y, 2));
-          const distMcp = Math.sqrt(Math.pow(mcp.x - wrist.x, 2) + Math.pow(mcp.y - wrist.y, 2));
-          return distTip < distMcp;
-        };
-
-        const isFist = isFingerFolded(8, 5) && isFingerFolded(12, 9) && isFingerFolded(16, 13) && isFingerFolded(20, 17);
-
-        const wrist = landmarks[0];
-        const wristRawX = isCameraFlippedRef.current ? (1 - wrist.x) : wrist.x;
-        const wristNormX = Math.max(0, Math.min(1, (wristRawX - 0.5) * SENSITIVITY + 0.5));
-        const wristNormY = Math.max(0, Math.min(1, (wrist.y - 0.5) * SENSITIVITY + 0.5));
-        const wristScreenX = wristNormX * window.innerWidth;
-        const wristScreenY = wristNormY * window.innerHeight;
-
-        if (isFist) {
-          if (!activeDragElementRef.current) {
-            const draggableElements = ['browser', 'kasa', 'reminders', 'notes', 'companion'];
-
-            for (const id of draggableElements) {
-              const el = document.getElementById(id);
-              if (el) {
-                const rect = el.getBoundingClientRect();
-                if (finalX >= rect.left && finalX <= rect.right && finalY >= rect.top && finalY <= rect.bottom) {
-                  activeDragElementRef.current = id;
-                  bringToFront(id);
-                  lastWristPosRef.current = { x: wristScreenX, y: wristScreenY };
-                  break;
-                }
-              }
-            }
-          }
-
-          if (activeDragElementRef.current) {
-            const dx = wristScreenX - lastWristPosRef.current.x;
-            const dy = wristScreenY - lastWristPosRef.current.y;
-
-            if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
-              updateElementPosition(activeDragElementRef.current, dx, dy);
-            }
-
-            lastWristPosRef.current = { x: wristScreenX, y: wristScreenY };
-          }
-        } else {
-          activeDragElementRef.current = null;
-        }
-
-        if (activeDragElementRef.current !== lastActiveDragElementRef.current) {
-          setActiveDragElement(activeDragElementRef.current);
-          lastActiveDragElementRef.current = activeDragElementRef.current;
-        }
-
-        drawSkeleton(ctx, landmarks);
-      }
-    }
-
     frameCountRef.current++;
     if (nowMs - lastFrameTimeRef.current >= 1000) {
       setFps(frameCountRef.current);
@@ -1641,21 +1536,6 @@ function AppContent() {
 
     if (isVideoOnRef.current) {
       requestAnimationFrame(predictWebcam);
-    }
-  };
-
-  const drawSkeleton = (ctx, landmarks) => {
-    ctx.strokeStyle = '#00FFFF';
-    ctx.lineWidth = 2;
-
-    const connections = HandLandmarker.HAND_CONNECTIONS;
-    for (const connection of connections) {
-      const start = landmarks[connection.start];
-      const end = landmarks[connection.end];
-      ctx.beginPath();
-      ctx.moveTo(start.x * canvasRef.current.width, start.y * canvasRef.current.height);
-      ctx.lineTo(end.x * canvasRef.current.width, end.y * canvasRef.current.height);
-      ctx.stroke();
     }
   };
 
@@ -1900,6 +1780,7 @@ function AppContent() {
     // In VN layout: visualizer + chat stay fixed
     const fixedElements = ['visualizer', 'chat', 'video', 'screen'];
     if (showStudyWindow) fixedElements.push('study');
+    if (sessionMode.active) fixedElements.push('session_notes');
     if (fixedElements.includes(id)) {
       console.log(`[MouseDrag] ${id} is a fixed element, not draggable`);
       return;
@@ -2052,6 +1933,8 @@ function AppContent() {
           characterScale={characterScale}
           characterY={characterY}
           characterX={characterShift}
+          headpatActive={headpatActive}
+          petpetSrc="/petpet.gif"
         />
         {/* Subtle VN vignette */}
         <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/55" />
@@ -2065,25 +1948,6 @@ function AppContent() {
         {/* Sleep Dimmer */}
         <div className={`absolute inset-0 bg-black/60 transition-opacity duration-[2000ms] ${isConnected ? 'opacity-0' : 'opacity-100'}`} />
       </div>
-
-      {/* Hand Cursor - Only show if tracking is enabled */}
-      {isVideoOn && isHandTrackingEnabled && (
-        <div
-          className={[
-            "fixed w-6 h-6 border-2 rounded-full pointer-events-none z-[100] transition-transform duration-75",
-            isPinching
-              ? "bg-white/35 border-white/50 scale-75 shadow-[0_0_15px_rgba(255,255,255,0.25)]"
-              : "border-white/50 shadow-[0_0_10px_rgba(255,255,255,0.18)]"
-          ].join(" ")}
-          style={{
-            left: cursorPos.x,
-            top: cursorPos.y,
-            transform: 'translate(-50%, -50%)'
-          }}
-        >
-          <div className="absolute top-1/2 left-1/2 w-1 h-1 bg-white rounded-full -translate-x-1/2 -translate-y-1/2" />
-        </div>
-      )}
 
       {/* Top Bar */}
       <div
@@ -2213,7 +2077,6 @@ function AppContent() {
         {isVideoOn && (
           <CameraWindow
             videoRef={videoRef}
-            canvasRef={canvasRef}
             isCameraFlipped={isCameraFlipped}
             onClose={toggleVideo}
             position={elementPositions.video}
@@ -2236,8 +2099,6 @@ function AppContent() {
             setSelectedSpeakerId={setSelectedSpeakerId}
             selectedWebcamId={selectedWebcamId}
             setSelectedWebcamId={setSelectedWebcamId}
-            cursorSensitivity={cursorSensitivity}
-            setCursorSensitivity={setCursorSensitivity}
             isCameraFlipped={isCameraFlipped}
             setIsCameraFlipped={setIsCameraFlipped}
             toolPermissions={toolPermissions}
@@ -2305,20 +2166,16 @@ function AppContent() {
             isMuted={isMuted}
             isVideoOn={isVideoOn}
             isScreenCaptureOn={visionMode === 'screen'}
-            isHandTrackingEnabled={isHandTrackingEnabled}
-            sessionActive={sessionMode.active}
             showSettings={showSettings}
             onTogglePower={togglePower}
             onToggleMute={toggleMute}
             onToggleVideo={toggleVideo}
             onToggleScreenCapture={toggleScreenCapture}
             onToggleSettings={() => setShowSettings(!showSettings)}
-            onToggleSession={toggleSessionMode}
             onToggleReminders={() => handleToggleWindow('reminders', showRemindersWindow, setShowRemindersWindow)}
             showRemindersWindow={showRemindersWindow}
             onToggleNotes={() => handleToggleWindow('notes', showNotesWindow, setShowNotesWindow)}
             showNotesWindow={showNotesWindow}
-            onToggleHand={() => setIsHandTrackingEnabled(!isHandTrackingEnabled)}
             onToggleKasa={() => handleToggleWindow('kasa', showKasaWindow, setShowKasaWindow)}
             showKasaWindow={showKasaWindow}
             onToggleBrowser={() => handleToggleWindow('browser', showBrowserWindow, setShowBrowserWindow)}
@@ -2369,6 +2226,20 @@ function AppContent() {
           />
         )}
 
+        {/* Session Notes Window */}
+        {showSessionNotesWindow && (
+          <SessionNotesWindow
+            socket={socket}
+            onClose={() => setShowSessionNotesWindow(false)}
+            position={elementPositions.session_notes}
+            width={elementSizes.session_notes?.w}
+            height={elementSizes.session_notes?.h}
+            onMouseDown={(e) => handleMouseDown(e, 'session_notes')}
+            activeDragElement={activeDragElement}
+            zIndex={getZIndex('session_notes')}
+          />
+        )}
+
         {/* Study Window */}
         {showStudyWindow && (
           <StudyWindow
@@ -2401,6 +2272,9 @@ function AppContent() {
             studySelection={studySelection}
             onOpenStudy={handleSelectStudy}
             onShowStudy={() => setShowStudyWindow(true)}
+            onHeadpat={triggerHeadpat}
+            sessionActive={sessionMode.active}
+            onToggleSession={toggleSessionMode}
           />
         )}
 

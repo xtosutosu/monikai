@@ -4,7 +4,6 @@ import { useLanguage } from '../contexts/LanguageContext';
 
 const CameraWindow = ({ 
     videoRef, 
-    canvasRef, 
     isCameraFlipped, 
     onClose, 
     position, 
@@ -53,10 +52,11 @@ const CameraWindow = ({
 
             {/* Content */}
             <div className="relative flex-1 bg-black overflow-hidden group" style={{ display: isMinimized ? 'none' : 'block', height: isMinimized ? 0 : 'auto' }}>
-                 <video ref={videoRef} autoPlay muted className="absolute inset-0 w-full h-full object-cover" />
-                 <canvas
-                  ref={canvasRef}
-                  className="absolute inset-0 w-full h-full opacity-80"
+                 <video
+                  ref={videoRef}
+                  autoPlay
+                  muted
+                  className="absolute inset-0 w-full h-full object-cover"
                   style={{ transform: isCameraFlipped ? 'scaleX(-1)' : 'none' }}
                 />
                 <div className="absolute top-2 left-2 text-[10px] text-white/50 bg-black/40 px-1.5 rounded border border-white/5 font-mono pointer-events-none">

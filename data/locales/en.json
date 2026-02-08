@@ -8,8 +8,6 @@
     "monikai_stopped": "Disconnecting now...",
     "model_connected": "Connected!",
     "project_focus": "I'm focusing on project: {project}",
-    "hand_tracking_active": "I can see your gestures now!",
-    "hand_tracking_error": "I'm having trouble tracking your hands: {error}",
     "camera_error": "I'm having trouble accessing the camera.",
     "reading_memory": "I'm reading this file into my memory...",
     "memory_empty": "This file seems empty or invalid.",
@@ -21,7 +19,6 @@
     "schedule": "Schedule",
     "notes": "Notes",
     "calendar": "Calendar",
-    "hand_tracking": "Hand Tracking",
     "web_agent": "Web Agent",
     "kasa": "Smart Home",
     "settings": "Settings",
@@ -43,7 +40,8 @@
     "total_size_exceeded": "Total attachment size exceeds {size} MB.",
     "prepare_failed": "I failed to prepare the attachments.",
     "sent_attachments": "sent attachments",
-    "you": "You"
+    "you": "You",
+    "monika_thought": "Monika (thought)"
   },
   "schedule": {
     "title": "Schedule",
@@ -97,8 +95,6 @@
     "microphone": "My Hearing (Microphone)",
     "speaker": "My Voice (Speaker)",
     "camera": "My Sight (Camera)",
-    "cursor": "Gesture Cursor Control",
-    "gestures": "Gestures",
     "mirror_vision": "Mirror Vision",
     "permissions": "Would you like me to ask permission for...",
     "memory": "Memory Management",
@@ -134,6 +130,30 @@
     "christmas_eve": "🎄 Christmas Eve",
     "christmas": "🎁 Christmas Day",
     "new_years_eve": "🎆 New Year's Eve"
+  },
+  "companion": {
+    "title": "Companion Hub",
+    "tabs": {
+      "session": "Session",
+      "activities": "Activities",
+      "study": "Study"
+    },
+    "activities": {
+      "eat": "Eat Together",
+      "headpat": "Headpat",
+      "gift": "Give a Gift",
+      "gift_prompt": "What gift do you want to give?"
+    },
+    "study": {
+      "japanese_together": "Study Japanese Together"
+    },
+    "session": {
+      "start": "Start Session",
+      "end": "End Session"
+    }
+  },
+  "session": {
+    "notes_title": "Session Notes"
   },
   "notes": {
     "title": "Notes",

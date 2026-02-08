@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Upload, Mic, Speaker, Video, Shield, Cpu, Globe, Hand, Lock } from 'lucide-react';
+import { X, Upload, Mic, Speaker, Video, Shield, Cpu, Globe, Lock } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 
 const CONFIGURABLE_TOOLS = [
@@ -21,8 +21,6 @@ const SettingsWindow = ({
   setSelectedSpeakerId,
   selectedWebcamId,
   setSelectedWebcamId,
-  cursorSensitivity,
-  setCursorSensitivity,
   isCameraFlipped,
   setIsCameraFlipped,
   toolPermissions = {},
@@ -136,45 +134,19 @@ const SettingsWindow = ({
                 </option>
               ))}
             </select>
-          </section>
 
-          {/* Gestures */}
-          <section className="space-y-4">
-            <h3 className="text-sm font-medium text-white uppercase tracking-widest flex items-center gap-2">
-              <Hand size={16} />
-              {t('settings.gestures')}
-            </h3>
-            
-            <div className="space-y-4 bg-white/5 p-4 rounded-lg border border-white/10">
-              <div className="flex items-center justify-between">
-                <span className="text-white/80">{t('settings.mirror_vision')}</span>
-                <button
-                  onClick={() => setIsCameraFlipped(!isCameraFlipped)}
-                  className={`w-12 h-6 rounded-full transition-colors relative ${
-                    isCameraFlipped ? 'bg-white' : 'bg-white/20'
-                  }`}
-                >
-                  <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
-                    isCameraFlipped ? 'left-7' : 'left-1'
-                  }`} />
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm text-white/60">
-                  <span>{t('settings.cursor')} (Sensitivity)</span>
-                  <span>{cursorSensitivity.toFixed(1)}x</span>
-                </div>
-                <input
-                  type="range"
-                  min="1"
-                  max="5"
-                  step="0.1"
-                  value={cursorSensitivity}
-                  onChange={(e) => setCursorSensitivity(parseFloat(e.target.value))}
-                  className="w-full accent-white h-1 bg-white/20 rounded-lg appearance-none cursor-pointer"
-                />
-              </div>
+            <div className="flex items-center justify-between bg-white/5 p-3 rounded-lg border border-white/10">
+              <span className="text-white/80">{t('settings.mirror_vision')}</span>
+              <button
+                onClick={() => setIsCameraFlipped(!isCameraFlipped)}
+                className={`w-12 h-6 rounded-full transition-colors relative ${
+                  isCameraFlipped ? 'bg-white' : 'bg-white/20'
+                }`}
+              >
+                <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
+                  isCameraFlipped ? 'left-7' : 'left-1'
+                }`} />
+              </button>
             </div>
           </section>
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Heart, Utensils, Gift, Smile, Book, X, RefreshCw, Check } from 'lucide-react';
+import { Heart, Utensils, Gift, Smile, Book, X, ClipboardList } from 'lucide-react';
+import { useLanguage } from '../contexts/LanguageContext';
 
 const CompanionWindow = ({
   socket,
@@ -12,41 +13,12 @@ const CompanionWindow = ({
   studySelection,
   onOpenStudy,
   onShowStudy,
+  onHeadpat,
+  sessionActive,
+  onToggleSession,
 }) => {
-  const [activeTab, setActiveTab] = useState('journal'); // activities, journal, japanese
-  const [journalText, setJournalText] = useState('');
-  const [journalTopics, setJournalTopics] = useState('');
-  const [journalMood, setJournalMood] = useState('');
-  const [journalStatus, setJournalStatus] = useState('idle'); // idle, saving, saved
-  const [journalPage, setJournalPage] = useState('');
-  const [journalDate, setJournalDate] = useState('');
-
-  useEffect(() => {
-    if (activeTab === 'journal') {
-      socket.emit('journal_get_today');
-    }
-  }, [activeTab, socket]);
-
-  useEffect(() => {
-    const handleJournalToday = (data) => {
-      if (data && typeof data.text === 'string') {
-        setJournalPage(data.text);
-      }
-      if (data && data.date) setJournalDate(data.date);
-    };
-    const handleJournalSaved = () => {
-      setJournalStatus('saved');
-      socket.emit('journal_get_today');
-      setTimeout(() => setJournalStatus('idle'), 1200);
-    };
-    socket.on('journal_today', handleJournalToday);
-    socket.on('journal_saved', handleJournalSaved);
-
-    return () => {
-      socket.off('journal_today', handleJournalToday);
-      socket.off('journal_saved', handleJournalSaved);
-    };
-  }, [socket]);
+  const { t } = useLanguage();
+  const [activeTab, setActiveTab] = useState('session'); // activities, session, study
 
   const handleAction = (action) => {
     let text = "";
@@ -55,10 +27,11 @@ const CompanionWindow = ({
         text = "*prepares a meal for us to eat together* Let's have a meal together! I made something nice.";
         break;
       case 'headpat':
-        text = "*gently pats your head* You're doing great, Monika.";
+        text = "*gently headpats Monika*";
+        if (onHeadpat) onHeadpat();
         break;
       case 'gift':
-        const gift = prompt("What gift do you want to give?");
+        const gift = prompt(t('companion.activities.gift_prompt'));
         if (gift) text = `*gives you a ${gift}* I got this specifically for you!`;
         break;
       case 'therapy_start':
@@ -106,26 +79,9 @@ const CompanionWindow = ({
       if (onShowStudy) onShowStudy();
     }
   };
-
-  const saveJournal = () => {
-    if (!journalText.trim()) return;
-    setJournalStatus('saving');
-    const topics = journalTopics
-      .split(',')
-      .map(t => t.trim())
-      .filter(Boolean);
-    socket.emit('journal_add', {
-      content: journalText.trim(),
-      topics,
-      mood: journalMood.trim() || undefined,
-      tags: ['companion_journal']
-    });
-    setJournalText('');
-  };
-
-  const refreshJournal = () => {
-    socket.emit('journal_get_today');
-  };
+  const sessionIconClass = sessionActive
+    ? "bg-amber-500/30 text-amber-300 group-hover:bg-amber-500/40"
+    : "bg-amber-500/20 text-amber-300 group-hover:bg-amber-500/30";
 
 
   return (
@@ -148,7 +104,7 @@ const CompanionWindow = ({
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-white/5 handle cursor-grab active:cursor-grabbing" data-drag-handle>
         <div className="flex items-center gap-2 text-white/90 font-medium">
           <Heart size={16} className="text-pink-400" />
-          <span>Companion Hub</span>
+          <span>{t('companion.title')}</span>
         </div>
         <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-lg transition-colors text-white/50 hover:text-white">
           <X size={14} />
@@ -157,14 +113,14 @@ const CompanionWindow = ({
 
       {/* Tabs */}
       <div className="flex p-2 gap-2 border-b border-white/10">
-        <button onClick={() => setActiveTab('journal')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${activeTab === 'journal' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>
-          <Book size={14} /> Journal
+        <button onClick={() => setActiveTab('session')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${activeTab === 'session' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>
+          <ClipboardList size={14} /> {t('companion.tabs.session')}
         </button>
         <button onClick={() => setActiveTab('activities')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${activeTab === 'activities' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>
-          <Smile size={14} /> Activities
+          <Smile size={14} /> {t('companion.tabs.activities')}
         </button>
-        <button onClick={() => setActiveTab('japanese')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${activeTab === 'japanese' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>
-          <Book size={14} /> Japanese
+        <button onClick={() => setActiveTab('study')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${activeTab === 'study' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>
+          <Book size={14} /> {t('companion.tabs.study')}
         </button>
       </div>
 
@@ -174,94 +130,42 @@ const CompanionWindow = ({
           <div className="grid grid-cols-2 gap-3">
             <button onClick={() => handleAction('eat')} className="flex flex-col items-center justify-center gap-2 p-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all hover:scale-[1.02] group">
               <div className="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center text-orange-400 group-hover:bg-orange-500/30 transition-colors"><Utensils size={20} /></div>
-              <span className="text-sm font-medium text-white/80">Eat Together</span>
+              <span className="text-sm font-medium text-white/80">{t('companion.activities.eat')}</span>
             </button>
             <button onClick={() => handleAction('headpat')} className="flex flex-col items-center justify-center gap-2 p-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all hover:scale-[1.02] group">
               <div className="w-10 h-10 rounded-full bg-pink-500/20 flex items-center justify-center text-pink-400 group-hover:bg-pink-500/30 transition-colors"><Heart size={20} /></div>
-              <span className="text-sm font-medium text-white/80">Headpat</span>
+              <span className="text-sm font-medium text-white/80">{t('companion.activities.headpat')}</span>
             </button>
             <button onClick={() => handleAction('gift')} className="col-span-2 flex flex-row items-center justify-center gap-3 p-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all hover:scale-[1.02] group">
               <div className="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400 group-hover:bg-purple-500/30 transition-colors"><Gift size={20} /></div>
-              <span className="text-sm font-medium text-white/80">Give a Gift</span>
-            </button>
-            <button onClick={openSelectedStudy} className="col-span-2 flex flex-row items-center justify-center gap-3 p-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all hover:scale-[1.02] group">
-              <div className="w-10 h-10 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-300 group-hover:bg-cyan-500/30 transition-colors"><Book size={20} /></div>
-              <span className="text-sm font-medium text-white/80">Start Studying</span>
+              <span className="text-sm font-medium text-white/80">{t('companion.activities.gift')}</span>
             </button>
           </div>
         )}
 
-        {activeTab === 'journal' && (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between text-xs text-white/40 uppercase tracking-wider">
-              <span>Journal Entry</span>
-              <div className="flex items-center gap-2">
-                {journalStatus === 'saving' && <span className="text-white/40">Saving...</span>}
-                {journalStatus === 'saved' && <span className="text-green-400 flex items-center gap-1"><Check size={12} /> Saved</span>}
-              </div>
-            </div>
-            <textarea
-              value={journalText}
-              onChange={(e) => setJournalText(e.target.value)}
-              className="w-full h-28 bg-black/30 border border-white/10 rounded-lg p-3 text-sm text-white/80 focus:outline-none focus:border-white/30"
-              placeholder="Write a reflection, feeling, or insight..."
-            />
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                value={journalTopics}
-                onChange={(e) => setJournalTopics(e.target.value)}
-                className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white/70 focus:outline-none focus:border-white/30"
-                placeholder="Topics (comma separated)"
-              />
-              <input
-                value={journalMood}
-                onChange={(e) => setJournalMood(e.target.value)}
-                className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white/70 focus:outline-none focus:border-white/30"
-                placeholder="Mood (optional)"
-              />
-            </div>
-            <button onClick={saveJournal} className="w-full py-2 bg-white/10 hover:bg-white/20 text-white/80 rounded-lg text-sm font-medium transition-colors">
-              Save Entry
-            </button>
-
-            <div className="mt-2 flex items-center justify-between text-xs text-white/40 uppercase tracking-wider">
-              <span>Today {journalDate ? `(${journalDate})` : ''}</span>
-              <button onClick={refreshJournal} className="flex items-center gap-1 text-white/40 hover:text-white transition-colors">
-                <RefreshCw size={12} /> Refresh
-              </button>
-            </div>
-            <div className="bg-black/30 rounded-lg p-3 text-xs text-white/70 font-mono whitespace-pre-wrap overflow-y-auto border border-white/5 max-h-40">
-              {journalPage || "No journal entries yet."}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'japanese' && (
-          <div className="flex flex-col gap-3">
-            <div className="text-xs text-white/40 uppercase tracking-wider">Study</div>
-            <select
-              value={selectedFolder}
-              onChange={(e) => setSelectedFolder(e.target.value)}
-              className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white/70 focus:outline-none focus:border-white/30"
-            >
-              {folders.map(f => (
-                <option key={f.name} value={f.name}>{f.name}</option>
-              ))}
-            </select>
-            <select
-              value={selectedFile}
-              onChange={(e) => setSelectedFile(e.target.value)}
-              className="bg-black/30 border border-white/10 rounded-lg p-2 text-xs text-white/70 focus:outline-none focus:border-white/30"
-            >
-              {visibleFiles.map(f => (
-                <option key={f.name} value={f.name}>{f.name}</option>
-              ))}
-            </select>
+        {activeTab === 'session' && (
+          <div className="grid grid-cols-1 gap-3">
             <button
-              onClick={openSelectedStudy}
-              className="w-full py-2 bg-white/10 hover:bg-white/20 text-white/80 rounded-lg text-sm font-medium transition-colors"
+              onClick={() => { if (onToggleSession) onToggleSession(); }}
+              className="flex flex-col items-center justify-center gap-2 p-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all hover:scale-[1.02] group"
             >
-              Open Study Window
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${sessionIconClass}`}>
+                <ClipboardList size={20} />
+              </div>
+              <span className="text-sm font-medium text-white/80">
+                {sessionActive ? t('companion.session.end') : t('companion.session.start')}
+              </span>
+            </button>
+          </div>
+        )}
+
+        {activeTab === 'study' && (
+          <div className="grid grid-cols-1 gap-3">
+            <button onClick={openSelectedStudy} className="flex flex-col items-center justify-center gap-2 p-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all hover:scale-[1.02] group">
+              <div className="w-10 h-10 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-300 group-hover:bg-cyan-500/30 transition-colors">
+                <Book size={20} />
+              </div>
+              <span className="text-sm font-medium text-white/80">{t('companion.study.japanese_together')}</span>
             </button>
           </div>
         )}
