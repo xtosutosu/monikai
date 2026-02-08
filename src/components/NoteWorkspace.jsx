@@ -1,71 +1,233 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Edit2, Eye, Loader2, Plus, Trash2, Pin } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import {
+  Bold,
+  Check,
+  Edit2,
+  Eye,
+  Highlighter,
+  Italic,
+  List,
+  ListOrdered,
+  Loader2,
+  Plus,
+  Trash2,
+} from 'lucide-react';
 
-const parseLine = (text) => {
-  const parts = text.split(/(\*\*.*?\*\*|\*.*?\*|`.*?`)/g);
+const INLINE_TOKEN_RE = /(\*\*[^*\n]+?\*\*|\*[^*\n]+?\*|==[^=\n]+?==|`[^`\n]+?`|<u>[\s\S]+?<\/u>|<mark>[\s\S]+?<\/mark>|<span[^>]*>[\s\S]+?<\/span>)/g;
+const ALIGN_OPEN_RE = /^<div\s+(?:style="text-align:\s*(left|center|right|justify)\s*"|align="(left|center|right|justify)")\s*>/i;
+const ALIGN_LINE_RE = /^<div\s+style="text-align:\s*(left|center|right|justify)\s*"\s*>$/i;
+
+const alignToClass = (align) => {
+  if (align === 'center') return 'text-center';
+  if (align === 'right') return 'text-right';
+  if (align === 'justify') return 'text-justify';
+  return '';
+};
+
+const sanitizeMarkdown = (value) => {
+  if (!value) return value;
+  let next = value;
+  next = next.replace(/<mark>([\s\S]*?)<\/mark>/gi, '==$1==');
+  next = next.replace(/<u>([\s\S]*?)<\/u>/gi, '$1');
+  next = next.replace(/<span[^>]*>([\s\S]*?)<\/span>/gi, '$1');
+  next = next.replace(/<\/?div[^>]*>/gi, '');
+  return next;
+};
+
+const stripSlashMarker = (line) => line.replace(/^(\s*)\/\s*/, '$1');
+
+const extractSpanStyle = (part) => {
+  const inner = part.replace(/^<span[^>]*>/i, '').replace(/<\/span>$/i, '');
+  const openTag = part.match(/^<span[^>]*>/i)?.[0] || '';
+  const style = {};
+  const styleAttrMatch = openTag.match(/style\s*=\s*["']([^"']+)["']/i) || openTag.match(/style\s*=\s*([^>]+)/i);
+  const styleText = styleAttrMatch ? styleAttrMatch[1] : '';
+  const colorMatch = styleText.match(/color:\s*([^;"']+)/i);
+  const bgMatch = styleText.match(/background-color:\s*([^;"']+)/i);
+  if (colorMatch) style.color = colorMatch[1].trim();
+  if (bgMatch) style.backgroundColor = bgMatch[1].trim();
+  return { inner, style };
+};
+
+const renderInline = (text, mode = 'preview') => {
+  const parts = text.split(INLINE_TOKEN_RE).filter(Boolean);
   return parts.map((part, i) => {
     if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
-      return <span key={i} className="font-bold text-white/90">{part}</span>;
+      const inner = part.slice(2, -2);
+      return (
+        <span key={i} className="font-bold text-white/90">
+          {renderInline(inner, mode)}
+        </span>
+      );
     }
     if (part.startsWith('*') && part.endsWith('*') && part.length >= 2) {
-      return <span key={i} className="italic text-white/80">{part}</span>;
+      const inner = part.slice(1, -1);
+      return (
+        <span key={i} className="italic text-white/80">
+          {renderInline(inner, mode)}
+        </span>
+      );
+    }
+    if (part.startsWith('==') && part.endsWith('==') && part.length >= 4) {
+      const inner = part.slice(2, -2);
+      return (
+        <mark key={i} className="bg-yellow-400/40 text-white px-0.5 rounded-sm">
+          {renderInline(inner, mode)}
+        </mark>
+      );
     }
     if (part.startsWith('`') && part.endsWith('`') && part.length >= 2) {
-      return <span key={i} className="bg-white/10 text-white rounded-sm">{part}</span>;
+      return (
+        <code key={i} className="bg-white/10 px-1 py-0.5 rounded text-white font-mono text-xs border border-white/5">
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    if (part.startsWith('<u>') && part.endsWith('</u>')) {
+      const inner = part.slice(3, -4);
+      return (
+        <span key={i} className="underline decoration-white/70">
+          {renderInline(inner, mode)}
+        </span>
+      );
+    }
+    if (part.startsWith('<mark>') && part.endsWith('</mark>')) {
+      const inner = part.slice(6, -7);
+      return (
+        <mark key={i} className="bg-yellow-400/40 text-white px-0.5 rounded-sm">
+          {renderInline(inner, mode)}
+        </mark>
+      );
+    }
+    if (part.toLowerCase().startsWith('<span')) {
+      const { inner, style } = extractSpanStyle(part);
+      const hasBg = Boolean(style.backgroundColor);
+      return (
+        <span key={i} style={style} className={hasBg ? 'px-0.5 rounded-sm' : ''}>
+          {renderInline(inner, mode)}
+        </span>
+      );
     }
     return <span key={i}>{part}</span>;
   });
 };
 
-const MarkdownOverlay = ({ content }) => {
-  const lines = content.split('\n');
+const renderOverlayLine = (line, key) => {
+  let inner = renderInline(line, 'overlay');
+  let className = '';
+
+  if (line.startsWith('# ')) {
+    className = 'font-bold text-white';
+    inner = renderInline(line.slice(2), 'overlay');
+  } else if (line.startsWith('## ')) {
+    className = 'font-bold text-white';
+    inner = renderInline(line.slice(3), 'overlay');
+  } else if (line.startsWith('### ')) {
+    className = 'font-bold text-white';
+    inner = renderInline(line.slice(4), 'overlay');
+  } else if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
+    className = 'text-white/80';
+    const match = line.match(/^(\s*[-*])(\s.*)/);
+    if (match) {
+      inner = (
+        <span className="flex items-start gap-2">
+          <span className="text-white mt-1 text-[10px]">•</span>
+          <span>{renderInline(match[2].trimStart(), 'overlay')}</span>
+        </span>
+      );
+    }
+  } else if (line.startsWith('> ')) {
+    className = 'text-white/60 italic';
+    inner = renderInline(line.slice(2), 'overlay');
+  }
+
   return (
-    <>
-      {lines.map((line, i) => {
-        let inner = parseLine(line);
-        let className = '';
-
-        if (line.startsWith('# ')) {
-          className = 'font-bold text-white';
-        } else if (line.startsWith('## ')) {
-          className = 'font-bold text-white';
-        } else if (line.startsWith('### ')) {
-          className = 'font-bold text-white';
-        } else if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
-          className = 'text-white/80';
-          const match = line.match(/^(\s*[-*])(\s.*)/);
-          if (match) {
-            inner = <><span className="text-white font-bold">{match[1]}</span>{parseLine(match[2])}</>;
-          }
-        } else if (line.startsWith('> ')) {
-          className = 'text-white/60 italic';
-        }
-
-        return (
-          <div key={i} className={`${className} min-h-[1.5em]`}>
-            {inner}
-            {line.length === 0 && <br />}
-          </div>
-        );
-      })}
-    </>
+    <div key={key} className={`${className} min-h-[1.5em]`}>
+      {inner}
+      {line.length === 0 && <br />}
+    </div>
   );
 };
 
-const parseInlineRendered = (text) => {
-  const parts = text.split(/(\*\*.*?\*\*|\*.*?\*|`.*?`)/g);
-  return parts.map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
-      return <strong key={i} className="font-bold text-white/90">{part.slice(2, -2)}</strong>;
+const MarkdownOverlay = ({ content }) => {
+  const lines = content.split('\n');
+  const elements = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const alignMatch = line.match(ALIGN_OPEN_RE);
+    if (alignMatch) {
+      const align = alignMatch[1] || alignMatch[2] || 'left';
+      const alignClass = alignToClass(align);
+      const blockLines = [];
+      const remainder = line.replace(ALIGN_OPEN_RE, '').trimStart();
+      if (remainder.includes('</div>')) {
+        const closeIndex = remainder.indexOf('</div>');
+        const beforeClose = remainder.slice(0, closeIndex);
+        if (beforeClose) blockLines.push(beforeClose);
+        elements.push(
+          <div key={`align-${i}`} className={alignClass}>
+            {blockLines.map((blockLine, idx) => renderOverlayLine(blockLine, `align-${i}-${idx}`))}
+          </div>
+        );
+        continue;
+      }
+      if (remainder) blockLines.push(remainder);
+      while (i + 1 < lines.length) {
+        const nextLine = lines[i + 1];
+        const closeIndex = nextLine.indexOf('</div>');
+        if (closeIndex !== -1) {
+          const beforeClose = nextLine.slice(0, closeIndex);
+          if (beforeClose) blockLines.push(beforeClose);
+          i += 1;
+          break;
+        }
+        blockLines.push(nextLine);
+        i += 1;
+      }
+      elements.push(
+        <div key={`align-${i}`} className={alignClass}>
+          {blockLines.map((blockLine, idx) => renderOverlayLine(blockLine, `align-${i}-${idx}`))}
+        </div>
+      );
+      continue;
     }
-    if (part.startsWith('*') && part.endsWith('*') && part.length >= 2) {
-      return <em key={i} className="italic text-white/80">{part.slice(1, -1)}</em>;
-    }
-    if (part.startsWith('`') && part.endsWith('`') && part.length >= 2) {
-      return <code key={i} className="bg-white/10 px-1 py-0.5 rounded text-white font-mono text-xs border border-white/5">{part.slice(1, -1)}</code>;
-    }
-    return part;
-  });
+    elements.push(renderOverlayLine(line, i));
+  }
+
+  return <>{elements}</>;
+};
+
+const renderPreviewLine = (line, key) => {
+  if (line.startsWith('# ')) {
+    return <h1 key={key} className="text-xl font-bold text-white mt-4 mb-2 border-b border-white/10 pb-1">{renderInline(line.slice(2), 'preview')}</h1>;
+  }
+  if (line.startsWith('## ')) {
+    return <h2 key={key} className="text-lg font-bold text-white mt-3 mb-2">{renderInline(line.slice(3), 'preview')}</h2>;
+  }
+  if (line.startsWith('### ')) {
+    return <h3 key={key} className="text-base font-bold text-white mt-2 mb-1">{renderInline(line.slice(4), 'preview')}</h3>;
+  }
+  if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
+    return (
+      <div key={key} className="flex items-start gap-2 ml-1 mb-1">
+        <span className="text-white mt-1.5 text-[10px]">•</span>
+        <span className="text-white/80 leading-relaxed">{renderInline(line.trim().slice(2), 'preview')}</span>
+      </div>
+    );
+  }
+  if (line.startsWith('> ')) {
+    return (
+      <div key={key} className="border-l-2 border-cyan-500/50 pl-3 py-1 my-2 text-white/60 italic bg-white/5 rounded-r">
+        {renderInline(line.slice(2), 'preview')}
+      </div>
+    );
+  }
+  if (!line.trim()) {
+    return <div key={key} className="h-2" />;
+  }
+  return <p key={key} className="mb-1 text-white/80 leading-relaxed">{renderInline(line, 'preview')}</p>;
 };
 
 const RenderedView = ({ content }) => {
@@ -76,30 +238,44 @@ const RenderedView = ({ content }) => {
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
-    if (line.startsWith('# ')) {
-      elements.push(<h1 key={i} className="text-xl font-bold text-white mt-4 mb-2 border-b border-white/10 pb-1">{parseInlineRendered(line.slice(2))}</h1>);
-    } else if (line.startsWith('## ')) {
-      elements.push(<h2 key={i} className="text-lg font-bold text-white mt-3 mb-2">{parseInlineRendered(line.slice(3))}</h2>);
-    } else if (line.startsWith('### ')) {
-      elements.push(<h3 key={i} className="text-base font-bold text-white mt-2 mb-1">{parseInlineRendered(line.slice(4))}</h3>);
-    } else if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
+    const alignMatch = line.match(ALIGN_OPEN_RE);
+    if (alignMatch) {
+      const align = alignMatch[1] || alignMatch[2] || 'left';
+      const alignClass = alignToClass(align);
+      const blockLines = [];
+      const remainder = line.replace(ALIGN_OPEN_RE, '').trimStart();
+      if (remainder.includes('</div>')) {
+        const closeIndex = remainder.indexOf('</div>');
+        const beforeClose = remainder.slice(0, closeIndex);
+        if (beforeClose) blockLines.push(beforeClose);
+        elements.push(
+          <div key={`align-${i}`} className={alignClass}>
+            {blockLines.map((blockLine, idx) => renderPreviewLine(blockLine, `align-${i}-${idx}`))}
+          </div>
+        );
+        continue;
+      }
+      if (remainder) blockLines.push(remainder);
+      while (i + 1 < lines.length) {
+        const nextLine = lines[i + 1];
+        const closeIndex = nextLine.indexOf('</div>');
+        if (closeIndex !== -1) {
+          const beforeClose = nextLine.slice(0, closeIndex);
+          if (beforeClose) blockLines.push(beforeClose);
+          i += 1;
+          break;
+        }
+        blockLines.push(nextLine);
+        i += 1;
+      }
       elements.push(
-        <div key={i} className="flex items-start gap-2 ml-1 mb-1">
-          <span className="text-white mt-1.5 text-[10px]">•</span>
-          <span className="text-white/80 leading-relaxed">{parseInlineRendered(line.trim().slice(2))}</span>
+        <div key={`align-${i}`} className={alignClass}>
+          {blockLines.map((blockLine, idx) => renderPreviewLine(blockLine, `align-${i}-${idx}`))}
         </div>
       );
-    } else if (line.startsWith('> ')) {
-      elements.push(
-        <div key={i} className="border-l-2 border-cyan-500/50 pl-3 py-1 my-2 text-white/60 italic bg-white/5 rounded-r">
-          {parseInlineRendered(line.slice(2))}
-        </div>
-      );
-    } else if (!line.trim()) {
-      elements.push(<div key={i} className="h-2" />);
-    } else {
-      elements.push(<p key={i} className="mb-1 text-white/80 leading-relaxed">{parseInlineRendered(line)}</p>);
+      continue;
     }
+    elements.push(renderPreviewLine(line, i));
   }
 
   return <div className="p-5 overflow-y-auto custom-scrollbar h-full select-text">{elements}</div>;
@@ -120,10 +296,11 @@ const NoteWorkspace = ({
   defaultPath = 'notes.md',
   basePath = '',
   filterPrefix = '',
-  pageLabel = '',
   onContentChange,
   initialCategory,
   compact = false,
+  hideCategories = false,
+  hidePaths = false,
 }) => {
   const [notesText, setNotesText] = useState('');
   const [pagePath, setPagePath] = useState(defaultPath);
@@ -134,15 +311,21 @@ const NoteWorkspace = ({
   const [showNewPage, setShowNewPage] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newCategory, setNewCategory] = useState('');
+  const [contextMenu, setContextMenu] = useState(null);
+  const [slashMenu, setSlashMenu] = useState(null);
+  const [titleEdit, setTitleEdit] = useState(null);
 
   const textareaRef = useRef(null);
   const overlayRef = useRef(null);
+  const titleInputRef = useRef(null);
   const timeoutRef = useRef(null);
   const saveTimeoutRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const isTypingRef = useRef(false);
   const notesTextRef = useRef('');
   const pagePathRef = useRef('');
+  const hideCategoryUI = Boolean(hideCategories);
+  const showPaths = !hidePaths;
 
   const normalizedBase = useMemo(() => (basePath || '').replace(/\\/g, '/').replace(/\/+$/, ''), [basePath]);
   const normalizedFilter = useMemo(() => (filterPrefix || '').replace(/\\/g, '/').replace(/\/+$/, ''), [filterPrefix]);
@@ -198,8 +381,12 @@ const NoteWorkspace = ({
 
     const onNotes = (data) => {
       if (data && typeof data.text === 'string') {
-        if (!isTypingRef.current || data.text !== notesTextRef.current) {
-          setNotesText(data.text);
+        const cleaned = sanitizeMarkdown(data.text);
+        if (!isTypingRef.current || cleaned !== notesTextRef.current) {
+          setNotesText(cleaned);
+        }
+        if (cleaned !== data.text) {
+          scheduleSave(cleaned);
         }
       }
       if (data && data.path) {
@@ -260,13 +447,292 @@ const NoteWorkspace = ({
   };
 
   const updateText = (val) => {
-    setNotesText(val);
+    const cleaned = sanitizeMarkdown(val);
+    setNotesText(cleaned);
     isTypingRef.current = true;
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
       isTypingRef.current = false;
     }, 700);
-    scheduleSave(val);
+    scheduleSave(cleaned);
+  };
+
+  const applyTextChange = (nextValue, selectionStart, selectionEnd) => {
+    updateText(nextValue);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(selectionStart, selectionEnd);
+    });
+  };
+
+  const wrapSelection = (before, after, { perLine = false } = {}) => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const value = notesTextRef.current || '';
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? 0;
+    const selected = value.slice(start, end);
+
+    if (!selected) {
+      const nextValue = value.slice(0, start) + before + after + value.slice(end);
+      applyTextChange(nextValue, start + before.length, start + before.length);
+      return;
+    }
+
+    let replacement = selected;
+    if (perLine && selected.includes('\n')) {
+      replacement = selected
+        .split('\n')
+        .map((line) => {
+          if (!line) return line;
+          const match = line.match(/^(\s*)(.*)$/);
+          const indent = match ? match[1] : '';
+          const rest = match ? match[2] : line;
+          const markerMatch = rest.match(/^((?:#{1,6}\s+)|(?:>\s+)|(?:[-*]\s+)|(?:\d+\.\s+))/);
+          const marker = markerMatch ? markerMatch[1] : '';
+          const body = markerMatch ? rest.slice(marker.length) : rest;
+          if (body.startsWith(before) && body.endsWith(after)) {
+            return `${indent}${marker}${body.slice(before.length, body.length - after.length)}`;
+          }
+          return `${indent}${marker}${before}${body}${after}`;
+        })
+        .join('\n');
+    } else if (selected.startsWith(before) && selected.endsWith(after)) {
+      replacement = selected.slice(before.length, selected.length - after.length);
+    } else {
+      replacement = `${before}${selected}${after}`;
+    }
+
+    const nextValue = value.slice(0, start) + replacement + value.slice(end);
+    applyTextChange(nextValue, start, start + replacement.length);
+  };
+
+  const applyLineTransform = (transform) => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const value = notesTextRef.current || '';
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? 0;
+    const blockStart = value.lastIndexOf('\n', start - 1) + 1;
+    let blockEnd = value.indexOf('\n', end);
+    if (blockEnd === -1) blockEnd = value.length;
+    const block = value.slice(blockStart, blockEnd);
+    const lines = block.split('\n');
+    const nextLines = transform(lines);
+    const nextBlock = nextLines.join('\n');
+    const nextValue = value.slice(0, blockStart) + nextBlock + value.slice(blockEnd);
+    applyTextChange(nextValue, blockStart, blockStart + nextBlock.length);
+  };
+
+  const toggleBulletList = () => {
+    applyLineTransform((lines) => {
+      const cleanedLines = lines.map(line => stripSlashMarker(line));
+      const nonEmpty = cleanedLines.filter(line => line.trim());
+      const allBulleted = nonEmpty.length > 0 && nonEmpty.every(line => /^(\s*)[-*]\s+/.test(line));
+      if (allBulleted) {
+        return cleanedLines.map(line => line.replace(/^(\s*)[-*]\s+/, '$1'));
+      }
+      return cleanedLines.map((line) => {
+        if (!line.trim()) return line;
+        const match = line.match(/^(\s*)(.*)$/);
+        const indent = match ? match[1] : '';
+        const rest = match ? match[2] : line;
+        const cleaned = rest.replace(/^([-*]|\d+\.)\s+/, '');
+        return `${indent}- ${cleaned}`;
+      });
+    });
+  };
+
+  const toggleNumberedList = () => {
+    applyLineTransform((lines) => {
+      const cleanedLines = lines.map(line => stripSlashMarker(line));
+      const nonEmpty = cleanedLines.filter(line => line.trim());
+      const allNumbered = nonEmpty.length > 0 && nonEmpty.every(line => /^\s*\d+\.\s+/.test(line));
+      if (allNumbered) {
+        return cleanedLines.map(line => line.replace(/^\s*\d+\.\s+/, ''));
+      }
+      let index = 1;
+      return cleanedLines.map((line) => {
+        if (!line.trim()) return line;
+        const match = line.match(/^(\s*)(.*)$/);
+        const indent = match ? match[1] : '';
+        const rest = match ? match[2] : line;
+        const cleaned = rest.replace(/^([-*]|\d+\.)\s+/, '');
+        const next = `${indent}${index}. ${cleaned}`;
+        index += 1;
+        return next;
+      });
+    });
+  };
+
+  const applyBulletCommand = () => {
+    applyLineTransform((lines) => {
+      const cleanedLines = lines.map(line => stripSlashMarker(line));
+      return cleanedLines.map((line) => {
+        const match = line.match(/^(\s*)(.*)$/);
+        const indent = match ? match[1] : '';
+        const rest = match ? match[2] : line;
+        const cleaned = rest.replace(/^([-*]|\d+\.)\s+/, '');
+        return `${indent}- ${cleaned}`.trimEnd();
+      });
+    });
+  };
+
+  const applyNumberedCommand = () => {
+    applyLineTransform((lines) => {
+      const cleanedLines = lines.map(line => stripSlashMarker(line));
+      let index = 1;
+      return cleanedLines.map((line) => {
+        const match = line.match(/^(\s*)(.*)$/);
+        const indent = match ? match[1] : '';
+        const rest = match ? match[2] : line;
+        const cleaned = rest.replace(/^([-*]|\d+\.)\s+/, '');
+        const next = `${indent}${index}. ${cleaned}`.trimEnd();
+        index += 1;
+        return next;
+      });
+    });
+  };
+
+  const applyHeading = (level) => {
+    const prefix = `${'#'.repeat(level)} `;
+    applyLineTransform((lines) => {
+      let idx = lines.findIndex(line => line.trim());
+      if (idx === -1) return lines;
+      const line = stripSlashMarker(lines[idx]);
+      const match = line.match(/^(\s*)(.*)$/);
+      const indent = match ? match[1] : '';
+      const rest = match ? match[2] : line;
+      const cleaned = rest.replace(/^#{1,6}\s+/, '');
+      if (rest.startsWith(prefix)) {
+        lines[idx] = `${indent}${cleaned}`;
+      } else {
+        lines[idx] = `${indent}${prefix}${cleaned}`;
+      }
+      return lines;
+    });
+  };
+
+  const toggleQuote = () => {
+    applyLineTransform((lines) => {
+      let idx = lines.findIndex(line => line.trim());
+      if (idx === -1) return lines;
+      const line = stripSlashMarker(lines[idx]);
+      const match = line.match(/^(\s*)(.*)$/);
+      const indent = match ? match[1] : '';
+      const rest = match ? match[2] : line;
+      if (rest.startsWith('> ')) {
+        lines[idx] = `${indent}${rest.replace(/^>\s+/, '')}`;
+      } else {
+        lines[idx] = `${indent}> ${rest}`;
+      }
+      return lines;
+    });
+  };
+
+  const applyHighlight = () => {
+    wrapSelection('==', '==', { perLine: true });
+  };
+
+  const getCaretCoordinates = (textarea) => {
+    if (!textarea || typeof window === 'undefined') return null;
+    const style = window.getComputedStyle(textarea);
+    const div = document.createElement('div');
+    const properties = [
+      'boxSizing',
+      'width',
+      'height',
+      'overflowX',
+      'overflowY',
+      'borderTopWidth',
+      'borderRightWidth',
+      'borderBottomWidth',
+      'borderLeftWidth',
+      'paddingTop',
+      'paddingRight',
+      'paddingBottom',
+      'paddingLeft',
+      'fontFamily',
+      'fontSize',
+      'fontWeight',
+      'fontStyle',
+      'letterSpacing',
+      'textTransform',
+      'textAlign',
+      'whiteSpace',
+      'wordWrap',
+      'lineHeight',
+    ];
+    properties.forEach((prop) => {
+      div.style[prop] = style[prop];
+    });
+    div.style.position = 'absolute';
+    div.style.visibility = 'hidden';
+    div.style.whiteSpace = 'pre-wrap';
+    div.style.wordWrap = 'break-word';
+    div.style.overflow = 'hidden';
+    div.style.width = `${textarea.clientWidth}px`;
+
+    const value = textarea.value || '';
+    const selectionEnd = textarea.selectionEnd ?? value.length;
+    div.textContent = value.substring(0, selectionEnd);
+    const span = document.createElement('span');
+    span.textContent = value.substring(selectionEnd) || '.';
+    div.appendChild(span);
+    document.body.appendChild(div);
+
+    const rect = textarea.getBoundingClientRect();
+    const left = rect.left + span.offsetLeft - textarea.scrollLeft;
+    const top = rect.top + span.offsetTop - textarea.scrollTop;
+    const lineHeight = parseFloat(style.lineHeight) || 16;
+    document.body.removeChild(div);
+
+    return { left, top: top + lineHeight };
+  };
+
+  const openSlashMenu = () => {
+    const coords = getCaretCoordinates(textareaRef.current);
+    if (!coords) return;
+    setSlashMenu({ x: coords.left, y: coords.top });
+  };
+
+  const closeSlashMenu = () => setSlashMenu(null);
+
+  const handleLiveKeyDown = (e) => {
+    if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        const value = el.value || '';
+        const pos = el.selectionStart ?? 0;
+        const lineStart = value.lastIndexOf('\n', Math.max(pos - 1, 0)) + 1;
+        const before = value.slice(lineStart, pos);
+        if (before.trim() === '/') {
+          openSlashMenu();
+        } else {
+          closeSlashMenu();
+        }
+      });
+      return;
+    }
+    if (slashMenu && e.key === 'Escape') {
+      closeSlashMenu();
+    }
+  };
+
+  const handleLiveChange = (e) => {
+    const value = e.target.value;
+    updateText(value);
+    if (!slashMenu) return;
+    const pos = e.target.selectionStart ?? value.length;
+    const lineStart = value.lastIndexOf('\n', Math.max(pos - 1, 0)) + 1;
+    const before = value.slice(lineStart, pos);
+    const trimmed = before.trim();
+    if (!trimmed.startsWith('/')) {
+      closeSlashMenu();
+    }
   };
 
   const handleScroll = (e) => {
@@ -284,6 +750,10 @@ const NoteWorkspace = ({
   )).sort((a, b) => a.localeCompare(b));
 
   useEffect(() => {
+    if (hideCategoryUI) {
+      if (category !== 'all') setCategory('all');
+      return;
+    }
     if (initialCategory) {
       setCategory(initialCategory);
       return;
@@ -292,13 +762,15 @@ const NoteWorkspace = ({
     if (categories.length && !categories.includes(category)) {
       setCategory('all');
     }
-  }, [categories, category, initialCategory]);
+  }, [categories, category, initialCategory, hideCategoryUI]);
 
-  const visiblePages = filteredPages.filter(p => {
-    if (category === 'all') return true;
-    if (category === 'root') return p.category === 'root';
-    return p.category === category;
-  });
+  const visiblePages = hideCategoryUI
+    ? filteredPages
+    : filteredPages.filter(p => {
+        if (category === 'all') return true;
+        if (category === 'root') return p.category === 'root';
+        return p.category === category;
+      });
 
   const activePage = visiblePages.find(p => p.path === pagePath)
     || filteredPages.find(p => p.path === pagePath)
@@ -308,7 +780,7 @@ const NoteWorkspace = ({
     if (!socket) return;
     const title = newTitle.trim();
     if (!title) return;
-    const catRaw = (newCategory || category) || '';
+    const catRaw = hideCategoryUI ? '' : (newCategory || category) || '';
     const cat = catRaw === 'all' ? '' : catRaw;
     const slug = slugify(title);
     const prefix = normalizedFilter || normalizedBase;
@@ -340,20 +812,109 @@ const NoteWorkspace = ({
     setTimeout(() => requestNotes(defaultPath), 150);
   };
 
-  const usePage = () => {
-    if (!pageLabel) return;
-    const title = `Page ${pageLabel}`;
-    const slug = slugify(`page-${pageLabel}`);
-    const prefix = normalizedFilter || normalizedBase;
-    const candidate = prefix ? `${prefix}/${slug}.md` : `${slug}.md`;
-    const exists = pages.some(p => p.path === candidate);
-    setPagePath(candidate);
-    if (!exists) {
-      socket.emit('memory_create_page', { path: candidate, title });
-      socket.emit('memory_list_pages');
-    }
-    requestNotes(candidate);
+  const openContextMenu = (e, path) => {
+    if (!path) return;
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, path });
   };
+
+  const revealInFileManager = async (path) => {
+    if (!path) return;
+    try {
+      const ipc = typeof window !== 'undefined' && window.require
+        ? window.require('electron').ipcRenderer
+        : null;
+      if (!ipc) return;
+      await ipc.invoke('reveal-memory-page', { path });
+    } catch {
+      // ignore
+    }
+  };
+
+  const renamePage = (path, nextTitleOverride) => {
+    if (!socket || !path) return;
+    const normalized = path.replace(/\\/g, '/');
+    const currentTitle = pages.find(p => p.path === normalized)?.title || activePage?.title || 'Untitled';
+    let nextTitleRaw = nextTitleOverride;
+    if (typeof nextTitleRaw !== 'string') {
+      nextTitleRaw = window.prompt('Rename note', currentTitle);
+    }
+    if (nextTitleRaw === null || typeof nextTitleRaw === 'undefined') return;
+    const nextTitle = String(nextTitleRaw).trim();
+    if (!nextTitle) return;
+    const titleText = nextTitle.replace(/\.(md|txt)$/i, '');
+    const extMatch = normalized.match(/\.[^/.]+$/);
+    const ext = extMatch ? extMatch[0] : '.md';
+    const dir = normalized.includes('/') ? normalized.slice(0, normalized.lastIndexOf('/')) : '';
+    const slug = slugify(titleText);
+    const target = dir ? `${dir}/${slug}${ext}` : `${slug}${ext}`;
+    const exists = pages.some(p => p.path === target);
+    if (exists && target !== normalized) {
+      window.alert('A note with this name already exists.');
+      return;
+    }
+    socket.emit('memory_rename_page', { path: normalized, new_path: target, title: titleText });
+  };
+
+  const startTitleEdit = (path) => {
+    if (!path) return;
+    const normalized = path.replace(/\\/g, '/');
+    const currentTitle = pages.find(p => p.path === normalized)?.title || activePage?.title || 'Untitled';
+    setTitleEdit({ path: normalized, value: currentTitle });
+  };
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handleDismiss = () => setContextMenu(null);
+    const handleKey = (e) => {
+      if (e.key === 'Escape') setContextMenu(null);
+    };
+    window.addEventListener('click', handleDismiss);
+    window.addEventListener('keydown', handleKey);
+    return () => {
+      window.removeEventListener('click', handleDismiss);
+      window.removeEventListener('keydown', handleKey);
+    };
+  }, [contextMenu]);
+
+  useEffect(() => {
+    if (!slashMenu) return;
+    const handleDismiss = (e) => {
+      if (e.target.closest('[data-slash-menu]')) return;
+      setSlashMenu(null);
+    };
+    const handleKey = (e) => {
+      if (e.key === 'Escape') setSlashMenu(null);
+    };
+    window.addEventListener('click', handleDismiss);
+    window.addEventListener('keydown', handleKey);
+    return () => {
+      window.removeEventListener('click', handleDismiss);
+      window.removeEventListener('keydown', handleKey);
+    };
+  }, [slashMenu]);
+
+  useEffect(() => {
+    if (!isPreview) setSlashMenu(null);
+  }, [isPreview]);
+
+  useEffect(() => {
+    if (!titleEdit) return;
+    requestAnimationFrame(() => {
+      titleInputRef.current?.focus();
+      titleInputRef.current?.select();
+    });
+  }, [titleEdit]);
+
+  const toolbarButton = 'p-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white/70 hover:text-white transition-colors';
+  const slashCommands = [
+    { id: 'h1', label: 'Heading 1', hint: '#', action: () => applyHeading(1) },
+    { id: 'h2', label: 'Heading 2', hint: '##', action: () => applyHeading(2) },
+    { id: 'h3', label: 'Heading 3', hint: '###', action: () => applyHeading(3) },
+    { id: 'bullet', label: 'Bulleted list', hint: '-', action: applyBulletCommand },
+    { id: 'numbered', label: 'Numbered list', hint: '1.', action: applyNumberedCommand },
+    { id: 'quote', label: 'Quote', hint: '>', action: toggleQuote },
+  ];
 
   return (
     <div className={`flex h-full min-h-0 ${compact ? 'text-[11px]' : 'text-sm'}`}>
@@ -378,19 +939,21 @@ const NoteWorkspace = ({
           </div>
         </div>
 
-        <div className="px-3 py-2 border-b border-white/10">
-          <div className="text-[9px] text-white/40 uppercase tracking-wider mb-1">Category</div>
-          <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1 text-[11px] text-white/70 focus:outline-none focus:border-white/30"
-          >
-            <option value="all">All</option>
-            {categories.map(cat => (
-              <option key={cat} value={cat}>{cat}</option>
-            ))}
-          </select>
-        </div>
+        {!hideCategoryUI && (
+          <div className="px-3 py-2 border-b border-white/10">
+            <div className="text-[9px] text-white/40 uppercase tracking-wider mb-1">Category</div>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1 text-[11px] text-white/70 focus:outline-none focus:border-white/30"
+            >
+              <option value="all">All</option>
+              {categories.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {showNewPage && (
           <div className="px-3 py-2 border-b border-white/10 space-y-2">
@@ -400,12 +963,14 @@ const NoteWorkspace = ({
               className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1 text-[11px] text-white/70 focus:outline-none focus:border-white/30"
               placeholder="Note title"
             />
-            <input
-              value={newCategory}
-              onChange={(e) => setNewCategory(e.target.value)}
-              className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1 text-[11px] text-white/70 focus:outline-none focus:border-white/30"
-              placeholder="Category (optional)"
-            />
+            {!hideCategoryUI && (
+              <input
+                value={newCategory}
+                onChange={(e) => setNewCategory(e.target.value)}
+                className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1 text-[11px] text-white/70 focus:outline-none focus:border-white/30"
+                placeholder="Category (optional)"
+              />
+            )}
             <button
               onClick={createPage}
               className="w-full px-2 py-1 rounded-md bg-white/15 hover:bg-white/25 text-white/80 text-[11px]"
@@ -428,12 +993,15 @@ const NoteWorkspace = ({
                   setPagePath(p.path);
                   requestNotes(p.path);
                 }}
+                onContextMenu={(e) => openContextMenu(e, p.path)}
                 className={`w-full text-left px-2 py-1.5 rounded-md transition-colors ${
                   isActive ? 'bg-white/20 text-white' : 'bg-white/5 text-white/60 hover:bg-white/10'
                 }`}
               >
                 <div className="text-[11px] font-medium">{p.title || 'Untitled'}</div>
-                <div className="text-[9px] text-white/35 truncate">{stripPrefix(p.path) || p.path}</div>
+                {showPaths && (
+                  <div className="text-[9px] text-white/35 truncate">{stripPrefix(p.path) || p.path}</div>
+                )}
               </button>
             );
           })}
@@ -441,10 +1009,43 @@ const NoteWorkspace = ({
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col bg-black/20">
-        <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-4">
+        <div
+          className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-4"
+          onContextMenu={(e) => openContextMenu(e, pagePath)}
+        >
           <div className="min-w-0">
-            <div className="text-sm font-semibold text-white truncate">{activePage?.title || 'Untitled'}</div>
-            <div className="text-[10px] text-white/35 truncate">{stripPrefix(pagePath) || pagePath}</div>
+            {titleEdit?.path === pagePath ? (
+              <input
+                ref={titleInputRef}
+                value={titleEdit.value}
+                onChange={(e) => setTitleEdit(prev => (prev ? { ...prev, value: e.target.value } : prev))}
+                onBlur={() => {
+                  if (titleEdit) renamePage(titleEdit.path, titleEdit.value);
+                  setTitleEdit(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (titleEdit) renamePage(titleEdit.path, titleEdit.value);
+                    setTitleEdit(null);
+                  }
+                  if (e.key === 'Escape') {
+                    setTitleEdit(null);
+                  }
+                }}
+                className="w-full bg-black/40 border border-white/10 rounded-md px-2 py-1 text-sm text-white/80 focus:outline-none focus:border-white/30"
+              />
+            ) : (
+              <button
+                className="text-sm font-semibold text-white truncate text-left"
+                onClick={() => startTitleEdit(pagePath)}
+                title="Rename note"
+              >
+                {activePage?.title || 'Untitled'}
+              </button>
+            )}
+            {showPaths && (
+              <div className="text-[10px] text-white/35 truncate">{stripPrefix(pagePath) || pagePath}</div>
+            )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {status === 'saving' && (
@@ -459,34 +1060,78 @@ const NoteWorkspace = ({
                 Saved
               </div>
             )}
-            {pageLabel && (
-              <button
-                onClick={usePage}
-                className="px-2 py-1 rounded-md bg-white/10 hover:bg-white/20 text-white/70 text-[10px] flex items-center gap-1"
-                title="Attach to current page"
-              >
-                <Pin size={12} />
-                Use page
-              </button>
-            )}
+            <div className="text-[10px] text-white/40 uppercase tracking-wider">
+              {isPreview ? 'Live Preview' : 'Source'}
+            </div>
             <button
-              onClick={() => setIsPreview(!isPreview)}
+              onClick={() => {
+                setIsPreview(!isPreview);
+              }}
               className={`p-1.5 rounded-lg transition-colors ${isPreview ? 'bg-white/20 text-white' : 'text-white/50 hover:text-white hover:bg-white/10'}`}
-              title={isPreview ? 'Edit' : 'Preview'}
+              title={isPreview ? 'Markdown view' : 'Rich view'}
             >
               {isPreview ? <Edit2 size={16} /> : <Eye size={16} />}
             </button>
           </div>
         </div>
 
+        <div className="px-3 py-2 border-b border-white/10 bg-black/30 flex flex-wrap items-center gap-1" data-toolbar-popup>
+          <button
+            onClick={() => {
+              wrapSelection('**', '**', { perLine: true });
+            }}
+            className={toolbarButton}
+            title="Bold"
+          >
+            <Bold size={14} />
+          </button>
+          <button
+            onClick={() => {
+              wrapSelection('*', '*', { perLine: true });
+            }}
+            className={toolbarButton}
+            title="Italic"
+          >
+            <Italic size={14} />
+          </button>
+          <button
+            onClick={() => {
+              applyHighlight();
+            }}
+            className={toolbarButton}
+            title="Highlight"
+          >
+            <Highlighter size={14} />
+          </button>
+
+          <div className="w-px h-4 bg-white/10 mx-1" />
+
+          <button
+            onClick={() => {
+              toggleBulletList();
+            }}
+            className={toolbarButton}
+            title="Bullet list"
+          >
+            <List size={14} />
+          </button>
+          <button
+            onClick={() => {
+              toggleNumberedList();
+            }}
+            className={toolbarButton}
+            title="Numbered list"
+          >
+            <ListOrdered size={14} />
+          </button>
+        </div>
+
         <div className="flex-1 min-h-0 relative group bg-black/10 overflow-hidden">
           {isPreview ? (
-            <RenderedView content={notesText} />
-          ) : (
             <>
               <div
                 ref={overlayRef}
-                className="absolute inset-0 p-5 text-sm font-mono leading-relaxed whitespace-pre-wrap break-words pointer-events-none overflow-y-scroll scrollbar-hide text-white/80"
+                className="absolute inset-0 p-5 text-[13px] leading-relaxed whitespace-pre-wrap break-words pointer-events-none overflow-y-scroll scrollbar-hide text-white/85"
                 aria-hidden="true"
               >
                 <MarkdownOverlay content={notesText} />
@@ -494,17 +1139,83 @@ const NoteWorkspace = ({
               <textarea
                 ref={textareaRef}
                 value={notesText}
-                onChange={(e) => updateText(e.target.value)}
+                onChange={handleLiveChange}
                 onScroll={handleScroll}
+                onKeyDown={handleLiveKeyDown}
                 placeholder="Write your notes here..."
-                className="absolute inset-0 w-full h-full bg-transparent p-5 text-sm font-mono leading-relaxed whitespace-pre-wrap break-words outline-none placeholder:text-white/20 text-transparent caret-white resize-none overflow-y-scroll custom-scrollbar"
+                className="absolute inset-0 w-full h-full bg-transparent p-5 text-[13px] leading-relaxed whitespace-pre-wrap break-words outline-none placeholder:text-white/20 text-transparent caret-white resize-none overflow-y-scroll custom-scrollbar selection:bg-white/20 selection:text-transparent"
                 spellCheck={false}
               />
             </>
+          ) : (
+            <textarea
+              ref={textareaRef}
+              value={notesText}
+              onChange={(e) => updateText(e.target.value)}
+              onScroll={handleScroll}
+              placeholder="Write your notes here..."
+              className="absolute inset-0 w-full h-full bg-transparent p-5 text-sm font-mono leading-relaxed whitespace-pre-wrap break-words outline-none placeholder:text-white/20 text-white/80 caret-white resize-none overflow-y-scroll custom-scrollbar"
+              spellCheck={false}
+            />
           )}
           <div className="absolute inset-0 pointer-events-none bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03] mix-blend-overlay" />
         </div>
+
       </div>
+
+      {slashMenu && typeof document !== 'undefined' && createPortal(
+        <div
+          data-slash-menu
+          className="fixed z-[220] w-[220px] rounded-lg border border-white/10 bg-black/95 shadow-xl p-1"
+          style={{ left: slashMenu.x, top: slashMenu.y }}
+        >
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-white/40">Commands</div>
+          {slashCommands.map((cmd) => (
+            <button
+              key={cmd.id}
+              className="w-full px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/10 rounded-md flex items-center justify-between"
+              onClick={() => {
+                cmd.action();
+                closeSlashMenu();
+              }}
+            >
+              <span>{cmd.label}</span>
+              <span className="text-[10px] text-white/40">{cmd.hint}</span>
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+
+      {contextMenu && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed z-[200] min-w-[220px] rounded-lg border border-white/10 bg-black/90 shadow-xl"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <button
+            className="w-full px-3 py-2 text-left text-[12px] text-white/80 hover:bg-white/10 rounded-lg"
+            onClick={() => {
+              const target = contextMenu.path;
+              setPagePath(target);
+              requestNotes(target);
+              startTitleEdit(target);
+              setContextMenu(null);
+            }}
+          >
+            Zmień nazwę
+          </button>
+          <button
+            className="w-full px-3 py-2 text-left text-[12px] text-white/80 hover:bg-white/10 rounded-lg"
+            onClick={() => {
+              revealInFileManager(contextMenu.path);
+              setContextMenu(null);
+            }}
+          >
+            Wyświetl w menedżerze plików
+          </button>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

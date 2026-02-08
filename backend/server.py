@@ -15,7 +15,7 @@ if sys.platform == 'win32':
 
 import socketio
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import asyncio
@@ -25,6 +25,7 @@ import sys
 import os
 import json
 import time
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -177,6 +178,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _force_cors_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("Access-Control-Allow-Origin", "*")
+    response.headers.setdefault("Access-Control-Allow-Methods", "GET, OPTIONS")
+    response.headers.setdefault("Access-Control-Allow-Headers", "Range, Content-Type, Authorization")
+    response.headers.setdefault("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
+    return response
 app_socketio = socketio.ASGIApp(sio, app)
 
 import signal
@@ -350,11 +361,30 @@ async def study_file(path: str):
         raise HTTPException(status_code=404, detail="File not found")
     if "answer key" in safe_path.name.lower():
         raise HTTPException(status_code=403, detail="Answer key is restricted")
-    headers = {"Content-Disposition": f'inline; filename="{safe_path.name}"'}
+    headers = {
+        "Content-Disposition": f'inline; filename="{safe_path.name}"',
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Type, Authorization",
+        "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
+    }
     return FileResponse(
         str(safe_path),
         media_type="application/pdf",
         headers=headers,
+    )
+
+
+@app.options("/study/file")
+async def study_file_options():
+    return Response(
+        status_code=204,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Range, Content-Type, Authorization",
+            "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
+        },
     )
 
 @sio.event
@@ -458,6 +488,32 @@ async def start_audio(sid, data=None):
     def on_transcription(data):
         # data = {"sender": "User"|"MonikAI", "text": "..."}
         asyncio.create_task(sio.emit('transcription', data))
+
+        try:
+            sender = (data or {}).get("sender", "")
+            text = (data or {}).get("text") or ""
+            if sender in ("Ty", "User") and text:
+                norm_text = str(text).lower()
+                if re.search(r"\bcan you see (this )?current page\??\b", norm_text):
+                    asyncio.create_task(sio.emit('study_request_share', {'reason': 'current_page'}, room=sid))
+
+                    async def _send_reminder():
+                        reminder = (
+                            'System Notification: The user is asking if you can see the current study page. '
+                            'You must tell them: "Send me the current page", and explain you can only read it '
+                            "after they send it via the chat button."
+                        )
+                        try:
+                            if hasattr(audio_loop, "send_system_message"):
+                                await audio_loop.send_system_message(reminder, end_of_turn=False)
+                            else:
+                                await audio_loop.session.send(input=reminder, end_of_turn=False)
+                        except Exception:
+                            pass
+
+                    asyncio.create_task(_send_reminder())
+        except Exception:
+            pass
 
         # Scene switching based on user text
         try:
@@ -1126,6 +1182,23 @@ async def user_input(sid, data):
                     print(f"[SERVER DEBUG] Failed to send attachment payload: {e}")
 
         study_payload, study_meta = STUDY_READER.get_latest_image(max_age_sec=45.0)
+
+        page_request = False
+        if text:
+            norm_text = str(text).lower()
+            if re.search(r"\bcan you see (this )?current page\??\b", norm_text):
+                page_request = True
+
+        if page_request:
+            try:
+                reminder = (
+                    'System Notification: The user is asking if you can see the current study page. '
+                    'You must tell them: "Send me the current page", and explain you can only read it '
+                    "after they send it via the chat button."
+                )
+                await audio_loop.session.send(input=reminder, end_of_turn=False)
+            except Exception:
+                pass
 
         if not study_payload and audio_loop and getattr(audio_loop, "video_mode", None) == "screen":
             try:
@@ -1949,6 +2022,46 @@ async def memory_delete_page(sid, data):
         await sio.emit('memory_pages', {'pages': _list_memory_pages()}, room=sid)
     except Exception as e:
         await sio.emit('error', {'msg': f"Failed to delete memory page: {e}"}, room=sid)
+
+@sio.event
+async def memory_rename_page(sid, data):
+    try:
+        path = (data or {}).get("path") or ""
+        new_path = (data or {}).get("new_path") or ""
+        title = (data or {}).get("title") or ""
+        if not path:
+            return
+        src = _resolve_memory_page(path)
+        if not src.exists():
+            await sio.emit('error', {'msg': "Memory page not found."}, room=sid)
+            return
+        dest = _resolve_memory_page(new_path or path)
+        if dest.exists() and dest != src:
+            await sio.emit('error', {'msg': "Target note already exists."}, room=sid)
+            return
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest != src:
+            src.rename(dest)
+        text = dest.read_text(encoding="utf-8", errors="ignore")
+        if title and dest.suffix.lower() == ".md":
+            lines = text.splitlines()
+            replaced = False
+            for idx, line in enumerate(lines):
+                if line.strip():
+                    if line.lstrip().startswith("#"):
+                        lines[idx] = f"# {title}"
+                        replaced = True
+                    break
+            if not replaced:
+                lines = [f"# {title}", ""] + lines
+            text = "\n".join(lines)
+            if text and not text.endswith("\n"):
+                text += "\n"
+            dest.write_text(text, encoding="utf-8")
+        await sio.emit('memory_page', {'path': str(dest), 'text': text}, room=sid)
+        await sio.emit('memory_pages', {'pages': _list_memory_pages()}, room=sid)
+    except Exception as e:
+        await sio.emit('error', {'msg': f"Failed to rename memory page: {e}"}, room=sid)
 
 @sio.event
 async def memory_append_page(sid, data):

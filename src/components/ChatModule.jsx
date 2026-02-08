@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Paperclip, X, Maximize2, Minimize2, MessageSquare, Send, Brain, Minus, ChevronUp } from "lucide-react";
+import { Paperclip, X, Maximize2, Minimize2, MessageSquare, Send, Brain, Minus, ChevronUp, BookOpen } from "lucide-react";
 import AudioBar from "./AudioBar";
 import { useLanguage } from '../contexts/LanguageContext';
 
@@ -141,6 +141,8 @@ const ChatModule = ({
   zIndex = 50,
   userSpeaking,
   micAudioData,
+  studyModeActive,
+  onShareStudyPage,
 }) => {
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -528,6 +530,24 @@ const ChatModule = ({
                   onChange={(e) => addFiles(e.target.files)}
                   className="hidden"
                 />
+
+                {studyModeActive && (
+                  <button
+                    type="button"
+                    onClick={() => onShareStudyPage && onShareStudyPage()}
+                    disabled={!onShareStudyPage}
+                    className={[
+                      "px-3 py-2 rounded-lg border transition-all flex items-center gap-2 text-[11px]",
+                      onShareStudyPage
+                        ? "bg-emerald-500/15 border-emerald-400/50 text-emerald-100 hover:bg-emerald-500/25"
+                        : "bg-white/5 border-white/10 text-white/30 cursor-not-allowed",
+                    ].join(" ")}
+                    title="Send me the current page"
+                  >
+                    <BookOpen size={14} />
+                    <span className="whitespace-nowrap">Send me the current page</span>
+                  </button>
+                )}
 
                 <button
                   type="button"

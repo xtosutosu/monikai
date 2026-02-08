@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, X, Send, RefreshCw, ChevronLeft, ChevronRight, ZoomIn } from 'lucide-react';
+import { BookOpen, X, Send, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import NoteWorkspace from './NoteWorkspace';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerSrc from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
@@ -19,6 +19,7 @@ const StudyWindow = ({
   selection,
   onSelectStudy,
   onRefreshCatalog,
+  shareRef,
 }) => {
   const [selectedFolder, setSelectedFolder] = useState(selection?.folder || '');
   const [selectedFile, setSelectedFile] = useState(selection?.file || '');
@@ -40,23 +41,34 @@ const StudyWindow = ({
   const [scratchText, setScratchText] = useState("");
   const [scratchPath, setScratchPath] = useState("");
   const [viewerWidth, setViewerWidth] = useState(0);
+  const [viewerHeight, setViewerHeight] = useState(0);
   const [renderEpoch, setRenderEpoch] = useState(0);
   const [pageLabels, setPageLabels] = useState(null);
+  const [outlineItems, setOutlineItems] = useState([]);
+  const [chapterJump, setChapterJump] = useState('');
+  const [pageInput, setPageInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [shareNotice, setShareNotice] = useState('');
+  const [showSpinner, setShowSpinner] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [isPanning, setIsPanning] = useState(false);
   const pageLabel = pageLabels && pageLabels[page - 1] ? String(pageLabels[page - 1]) : "";
   const lastImageSentRef = useRef({ page: 0, ts: 0 });
   const lastHiResPageRef = useRef(0);
   const manualShareOnly = true;
+  const docLoadTaskRef = useRef(null);
+  const shareNoticeTimerRef = useRef(null);
+  const spinnerTimerRef = useRef(null);
+  const spinnerStartRef = useRef(0);
+  const panStateRef = useRef({ active: false, startX: 0, startY: 0, scrollLeft: 0, scrollTop: 0 });
 
   useEffect(() => {
     if (selection?.folder) setSelectedFolder(selection.folder);
     if (selection?.file) setSelectedFile(selection.file);
   }, [selection?.folder, selection?.file]);
 
-  const scratchBase = useMemo(() => {
-    const baseFolder = selectedFolder || 'study';
-    const baseFile = (selectedFile || 'notes').replace(/\.pdf$/i, '').trim() || 'notes';
-    return `study/${baseFolder}/${baseFile}`;
-  }, [selectedFolder, selectedFile]);
+  const scratchBase = useMemo(() => 'study/shared', []);
 
   const defaultScratchPath = `${scratchBase}/scratchpad.md`;
 
@@ -86,9 +98,7 @@ const StudyWindow = ({
       const mode = payload?.mode === "append" ? "append" : "replace";
       const idxRaw = payload?.page_index;
       const targetIndex = Number.isFinite(idxRaw) ? Math.max(0, Number(idxRaw)) : null;
-      const baseFolder = selectedFolder || 'study';
-      const baseFile = (selectedFile || 'notes').replace(/\.pdf$/i, '').trim() || 'notes';
-      const basePath = `study/${baseFolder}/${baseFile}`;
+      const basePath = scratchBase || 'study/shared';
       const targetPath = targetIndex !== null
         ? `${basePath}/page-${targetIndex + 1}.md`
         : (scratchPath || `${basePath}/scratchpad.md`);
@@ -107,7 +117,7 @@ const StudyWindow = ({
     };
     socket.on('study_notes', onNotes);
     return () => socket.off('study_notes', onNotes);
-  }, [socket, selectedFolder, selectedFile, scratchPath]);
+  }, [socket, scratchBase, scratchPath]);
 
   useEffect(() => {
     if (!socket) return;
@@ -150,6 +160,9 @@ const StudyWindow = ({
       setPageCount(0);
       pdfDocRef.current = null;
       setPageLabels(null);
+      setOutlineItems([]);
+      setLoadError('');
+      setZoom(1);
       pageTextCacheRef.current = {};
       if (onSelectStudy) {
         onSelectStudy({
@@ -161,17 +174,97 @@ const StudyWindow = ({
     }
   }, [activeFile, selectedFile, activeFolder, selectedFolder, onSelectStudy]);
 
+  const buildOutlineItems = useCallback(async (doc) => {
+    if (!doc?.getOutline) return [];
+    try {
+      const outline = await doc.getOutline();
+      if (!Array.isArray(outline) || outline.length === 0) return [];
+      const items = [];
+      const walk = async (nodes, depth = 0) => {
+        for (const node of nodes) {
+          const titleRaw = String(node?.title || '').trim();
+          let pageIndex = null;
+          try {
+            let dest = node?.dest;
+            if (typeof dest === 'string') {
+              dest = await doc.getDestination(dest);
+            }
+            if (Array.isArray(dest) && dest[0] !== undefined && dest[0] !== null) {
+              if (typeof dest[0] === 'number') {
+                pageIndex = dest[0];
+              } else {
+                pageIndex = await doc.getPageIndex(dest[0]);
+              }
+            }
+          } catch {
+            pageIndex = null;
+          }
+          if (Number.isFinite(pageIndex)) {
+            const indent = depth > 0 ? `${'-'.repeat(Math.min(depth, 3))} ` : '';
+            items.push({
+              title: `${indent}${titleRaw || `Section ${pageIndex + 1}`}`.trim(),
+              page: pageIndex + 1,
+            });
+          }
+          if (Array.isArray(node?.items) && node.items.length) {
+            await walk(node.items, depth + 1);
+          }
+        }
+      };
+      await walk(outline, 0);
+      return items;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const startSpinner = () => {
+    spinnerStartRef.current = Date.now();
+    if (spinnerTimerRef.current) {
+      clearTimeout(spinnerTimerRef.current);
+      spinnerTimerRef.current = null;
+    }
+    setShowSpinner(true);
+  };
+
+  const stopSpinner = () => {
+    const elapsed = Date.now() - spinnerStartRef.current;
+    const minMs = 420;
+    const delay = elapsed < minMs ? (minMs - elapsed) : 0;
+    if (spinnerTimerRef.current) {
+      clearTimeout(spinnerTimerRef.current);
+    }
+    spinnerTimerRef.current = setTimeout(() => {
+      setShowSpinner(false);
+      spinnerTimerRef.current = null;
+    }, delay);
+  };
+
   useEffect(() => {
-    if (!activeFile?.path) return;
-    const url = `http://localhost:8000/study/file?path=${encodeURIComponent(activeFile.path)}`;
+    if (!activeFile?.path) {
+      setIsLoading(false);
+      setLoadError('');
+      if (spinnerTimerRef.current) {
+        clearTimeout(spinnerTimerRef.current);
+        spinnerTimerRef.current = null;
+      }
+      setShowSpinner(false);
+      return;
+    }
+    setIsLoading(true);
+    setLoadError('');
+    startSpinner();
+    const backendBase = import.meta.env?.DEV ? '' : 'http://localhost:8000';
+    const url = `${backendBase}/study/file?path=${encodeURIComponent(activeFile.path)}`;
     let cancelled = false;
-    const task = getDocument(url);
-    task.promise.then(doc => {
+    const loadFromDoc = (doc) => {
       if (cancelled) return;
       pdfDocRef.current = doc;
       setPageCount(doc.numPages || 0);
       lastSentRef.current = { page: 0, ts: 0 };
       setRenderEpoch(e => e + 1);
+      setIsLoading(false);
+      stopSpinner();
       doc.getPageLabels().then(labels => {
         if (Array.isArray(labels) && labels.length) {
           setPageLabels(labels);
@@ -181,35 +274,79 @@ const StudyWindow = ({
       }).catch(() => {
         setPageLabels(null);
       });
-    }).catch(() => {
-      if (!cancelled) {
-        pdfDocRef.current = null;
-        setPageCount(0);
+      buildOutlineItems(doc).then(items => {
+        if (!cancelled) setOutlineItems(items);
+      }).catch(() => {
+        if (!cancelled) setOutlineItems([]);
+      });
+    };
+
+    const task = getDocument({
+      url,
+      disableRange: true,
+      disableStream: true,
+      disableAutoFetch: true,
+    });
+    docLoadTaskRef.current = task;
+    task.promise.then(doc => {
+      loadFromDoc(doc);
+    }).catch(async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const buffer = await res.arrayBuffer();
+        const task2 = getDocument({ data: new Uint8Array(buffer) });
+        docLoadTaskRef.current = task2;
+        const doc = await task2.promise;
+        loadFromDoc(doc);
+      } catch (err) {
+        if (!cancelled) {
+          console.error('Failed to load PDF', err);
+          pdfDocRef.current = null;
+          setPageCount(0);
+          setOutlineItems([]);
+          setIsLoading(false);
+          stopSpinner();
+          setLoadError(err?.message || 'Failed to load PDF');
+        }
       }
     });
     return () => {
       cancelled = true;
-      try { task.destroy(); } catch {}
+      try { docLoadTaskRef.current?.destroy?.(); } catch {}
     };
-  }, [activeFile?.path]);
+  }, [activeFile?.path, buildOutlineItems]);
 
   useEffect(() => {
     if (!viewerRef.current) return;
     const resizeObserver = new ResizeObserver(entries => {
-      const width = Math.max(0, Math.floor(entries[0]?.contentRect?.width || 0));
-      if (width) {
-        setViewerWidth(prev => (prev === width ? prev : width));
-      }
+      const rect = entries[0]?.contentRect;
+      const width = Math.max(0, Math.floor(rect?.width || 0));
+      const height = Math.max(0, Math.floor(rect?.height || 0));
+      if (width) setViewerWidth(prev => (prev === width ? prev : width));
+      if (height) setViewerHeight(prev => (prev === height ? prev : height));
     });
     resizeObserver.observe(viewerRef.current);
     return () => resizeObserver.disconnect();
   }, [pageCount]);
 
   useEffect(() => {
-    if (viewerWidth > 0) {
+    if (viewerWidth > 0 && viewerHeight > 0) {
       setRenderEpoch(e => e + 1);
     }
-  }, [viewerWidth]);
+  }, [viewerWidth, viewerHeight]);
+
+  useEffect(() => {
+    setRenderEpoch(e => e + 1);
+  }, [zoom]);
+
+  useEffect(() => {
+    if (zoom <= 1 && viewerRef.current) {
+      viewerRef.current.scrollLeft = 0;
+      viewerRef.current.scrollTop = 0;
+    }
+  }, [zoom]);
 
   const emitStudyPageUser = useCallback((pageNumber) => {
     if (!socket || !activeFile?.path || pageNumber <= 0) return;
@@ -305,14 +442,16 @@ const StudyWindow = ({
   const renderPage = useCallback(async (pageNumber) => {
     const doc = pdfDocRef.current;
     const canvas = pageCanvasRef.current;
-    if (!doc || !canvas || viewerWidth <= 0) return;
+    if (!doc || !canvas || viewerWidth <= 0 || viewerHeight <= 0) return;
     const seq = renderSeqRef.current + 1;
     renderSeqRef.current = seq;
     try {
       const pageObj = await doc.getPage(pageNumber);
       const viewport = pageObj.getViewport({ scale: 1 });
       const targetWidth = Math.max(280, viewerWidth - 24);
-      const scale = targetWidth / viewport.width;
+      const targetHeight = Math.max(240, viewerHeight - 24);
+      const baseScale = Math.min(targetWidth / viewport.width, targetHeight / viewport.height);
+      const scale = baseScale * zoom;
       const scaled = pageObj.getViewport({ scale });
       const context = canvas.getContext('2d');
       canvas.width = Math.floor(scaled.width);
@@ -371,7 +510,72 @@ const StudyWindow = ({
     };
   }, []);
 
-  const hasDocument = Boolean(activeFile?.path && pageCount > 0);
+  const hasDocument = Boolean(activeFile?.path && pageCount > 0 && !loadError);
+
+  const clampZoom = (val) => Math.max(0.6, Math.min(val, 2.4));
+  const handleWheelZoom = (e) => {
+    if (!hasDocument) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const direction = e.deltaY > 0 ? -1 : 1;
+    setZoom(prev => clampZoom(prev * (direction > 0 ? 1.08 : 0.92)));
+  };
+
+  const handlePanStart = (e) => {
+    if (!hasDocument || zoom <= 1) return;
+    if (e.button !== 0) return;
+    const el = viewerRef.current;
+    if (!el) return;
+    e.preventDefault();
+    e.stopPropagation();
+    panStateRef.current = {
+      active: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      scrollLeft: el.scrollLeft,
+      scrollTop: el.scrollTop,
+    };
+    setIsPanning(true);
+  };
+
+  const handlePanMove = (e) => {
+    if (!panStateRef.current.active) return;
+    const el = viewerRef.current;
+    if (!el) return;
+    const dx = e.clientX - panStateRef.current.startX;
+    const dy = e.clientY - panStateRef.current.startY;
+    el.scrollLeft = panStateRef.current.scrollLeft - dx;
+    el.scrollTop = panStateRef.current.scrollTop - dy;
+  };
+
+  const handlePanEnd = () => {
+    if (!panStateRef.current.active) return;
+    panStateRef.current.active = false;
+    setIsPanning(false);
+  };
+
+  useEffect(() => {
+    if (!isPanning) return;
+    window.addEventListener('mousemove', handlePanMove);
+    window.addEventListener('mouseup', handlePanEnd);
+    window.addEventListener('mouseleave', handlePanEnd);
+    return () => {
+      window.removeEventListener('mousemove', handlePanMove);
+      window.removeEventListener('mouseup', handlePanEnd);
+      window.removeEventListener('mouseleave', handlePanEnd);
+    };
+  }, [isPanning]);
+
+  const prettifyTitle = (name) => {
+    const base = String(name || '')
+      .replace(/\.pdf$/i, '')
+      .replace(/[_]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return base
+      .replace(/\s+-\s+(\d+(st|nd|rd|th)\s+Edition)$/i, ' ($1)')
+      .replace(/\s+Answer\s+Key$/i, ' (Answer Key)');
+  };
 
   const updateField = (id, value) => {
     setFields(prev => prev.map(f => (f.id === id ? { ...f, value } : f)));
@@ -404,6 +608,25 @@ const StudyWindow = ({
     setPage(clamped);
   };
 
+  const resolvePageInput = (raw) => {
+    const value = String(raw || '').trim();
+    if (!value) return null;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+    if (Array.isArray(pageLabels) && pageLabels.length) {
+      const idx = pageLabels.findIndex(label => String(label).toLowerCase() === value.toLowerCase());
+      if (idx >= 0) return idx + 1;
+    }
+    return null;
+  };
+
+  const applyPageInput = () => {
+    const target = resolvePageInput(pageInput);
+    if (!target) return;
+    changePage(target);
+    setPageInput('');
+  };
+
   const ensureHiResPage = async (targetWidthOverride) => {
     const doc = pdfDocRef.current;
     if (!doc) return null;
@@ -429,6 +652,15 @@ const StudyWindow = ({
   const shareWithMonika = async () => {
     if (!socket || !selectedFile) return;
     try {
+      if (shareNoticeTimerRef.current) {
+        clearTimeout(shareNoticeTimerRef.current);
+        shareNoticeTimerRef.current = null;
+      }
+      setShareNotice('Let me review this page');
+      shareNoticeTimerRef.current = setTimeout(() => {
+        setShareNotice('');
+        shareNoticeTimerRef.current = null;
+      }, 2200);
       const canvas = await ensureHiResPage(Math.max(2200, Math.min(3800, viewerWidth * 4.0)));
       if (!canvas) return;
       const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
@@ -448,54 +680,34 @@ const StudyWindow = ({
     }
   };
 
-  const sendZoomTiles = async () => {
-    if (!socket || !selectedFile) return;
-    const canvas = await ensureHiResPage();
-    if (!canvas) return;
-    const cols = 2;
-    const rows = 2;
-    const tileW = Math.floor(canvas.width / cols);
-    const tileH = Math.floor(canvas.height / rows);
-    const tiles = [];
-    for (let r = 0; r < rows; r += 1) {
-      for (let c = 0; c < cols; c += 1) {
-        const tileCanvas = document.createElement('canvas');
-        tileCanvas.width = tileW;
-        tileCanvas.height = tileH;
-        const ctx = tileCanvas.getContext('2d');
-        ctx.drawImage(
-          canvas,
-          c * tileW,
-          r * tileH,
-          tileW,
-          tileH,
-          0,
-          0,
-          tileW,
-          tileH
-        );
-        const dataUrl = tileCanvas.toDataURL('image/png');
-        const base64 = dataUrl.split(',')[1] || '';
-        if (base64) {
-          tiles.push({ mime_type: 'image/png', data: base64 });
-        }
-      }
-    }
-    if (!tiles.length) return;
-    socket.emit('study_page_tiles', {
-      folder: selectedFolder,
-      file: selectedFile,
-      page,
-      page_label: pageLabel,
-      tiles,
-    });
-  };
-
   useEffect(() => {
     if (pageCount > 0 && page > pageCount) {
       setPage(1);
     }
   }, [pageCount, page]);
+
+  useEffect(() => {
+    return () => {
+      if (shareNoticeTimerRef.current) {
+        clearTimeout(shareNoticeTimerRef.current);
+        shareNoticeTimerRef.current = null;
+      }
+      if (spinnerTimerRef.current) {
+        clearTimeout(spinnerTimerRef.current);
+        spinnerTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!shareRef) return;
+    shareRef.current = shareWithMonika;
+    return () => {
+      if (shareRef.current === shareWithMonika) {
+        shareRef.current = null;
+      }
+    };
+  }, [shareRef, shareWithMonika]);
 
   const refreshCatalog = () => {
     if (onRefreshCatalog) onRefreshCatalog();
@@ -538,94 +750,141 @@ const StudyWindow = ({
 
       <div className="grid grid-cols-[0.95fr_1.05fr] gap-0 flex-1 min-h-0">
         {/* PDF Viewer */}
-        <div className="flex flex-col border-r border-white/10 min-h-0">
-          <div className="p-3 border-b border-white/10 flex items-center gap-2">
-            <select
-              value={selectedFolder}
-              onChange={(e) => setSelectedFolder(e.target.value)}
-              className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-xs text-white/80"
-            >
-              {folders.map(f => (
-                <option key={f.name} value={f.name}>{f.name}</option>
-              ))}
-            </select>
-            <select
-              value={selectedFile}
-              onChange={(e) => {
-                const name = e.target.value;
-                setSelectedFile(name);
-                const f = visibleFiles.find(v => v.name === name);
-                if (f && onSelectStudy) {
-                  onSelectStudy({ folder: selectedFolder, file: f.name, path: f.path });
-                }
-              }}
-              className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-xs text-white/80 flex-1"
-            >
-              {visibleFiles.map(f => (
-                <option key={f.name} value={f.name}>{f.name}</option>
-              ))}
-            </select>
-            <div className="ml-2 flex items-center gap-1">
-              <button
-                onClick={shareWithMonika}
-                className="px-2 py-1 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-100"
-                title="Share with Monika (hi-res + OCR)"
+        <div className="flex flex-col border-r border-white/10 min-h-0 min-w-0">
+          <div className="flex-1 min-h-0 bg-black/60 relative group min-w-0 overflow-hidden">
+            <div className="absolute top-3 left-3 right-3 z-10 flex items-center gap-2 px-2 py-2 rounded-lg bg-black/70 border border-white/10 opacity-0 pointer-events-none transition-opacity duration-200 group-hover:opacity-100 group-hover:pointer-events-auto">
+              <select
+                value={selectedFolder}
+                onChange={(e) => setSelectedFolder(e.target.value)}
+                className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-xs text-white/80"
               >
-                <Send size={12} />
-              </button>
-              <button
-                onClick={sendZoomTiles}
-                className="px-1.5 py-1 rounded-md bg-white/5 hover:bg-white/10 text-white/70"
-                title="Send zoomed tiles to Monika"
+                {folders.map(f => (
+                  <option key={f.name} value={f.name}>{prettifyTitle(f.name)}</option>
+                ))}
+              </select>
+              <select
+                value={selectedFile}
+                onChange={(e) => {
+                  const name = e.target.value;
+                  setSelectedFile(name);
+                  const f = visibleFiles.find(v => v.name === name);
+                  if (f && onSelectStudy) {
+                    onSelectStudy({ folder: selectedFolder, file: f.name, path: f.path });
+                  }
+                }}
+                className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-xs text-white/80 flex-1"
+                title={selectedFile}
               >
-                <ZoomIn size={12} />
-              </button>
-              <button
-                onClick={() => changePage(page - 1)}
-                disabled={page <= 1}
-                className="px-1.5 py-1 rounded-md bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-30 disabled:hover:bg-white/5"
-                title="Previous page"
-              >
-                <ChevronLeft size={12} />
-              </button>
-              <button
-                onClick={() => changePage(page + 1)}
-                disabled={pageCount > 0 ? page >= pageCount : false}
-                className="px-1.5 py-1 rounded-md bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-30 disabled:hover:bg-white/5"
-                title="Next page"
-              >
-                <ChevronRight size={12} />
-              </button>
-              <div className="ml-2 text-[11px] text-white/50">
-                {pageCount > 0 ? `Page ${page} / ${pageCount}` : `Page ${page}`}
-                {pageLabel ? ` • Book ${pageLabel}` : ''}
-              </div>
+                {visibleFiles.map(f => (
+                  <option key={f.name} value={f.name}>{prettifyTitle(f.name)}</option>
+                ))}
+              </select>
+              {outlineItems.length > 0 && (
+                <select
+                  value={chapterJump}
+                  onChange={(e) => {
+                    const target = Number(e.target.value);
+                    if (Number.isFinite(target) && target > 0) {
+                      changePage(target);
+                    }
+                    setChapterJump('');
+                  }}
+                  className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-xs text-white/80 max-w-[180px]"
+                  title="Chapters"
+                >
+                  <option value="">Chapters</option>
+                  {outlineItems.map((item, idx) => (
+                    <option key={`${item.page}-${idx}`} value={item.page}>
+                      {item.title} · p. {item.page}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
-          </div>
-          <div className="flex-1 min-h-0 bg-black/60">
             {hasDocument ? (
               <div
                 ref={viewerRef}
-                className="w-full h-full overflow-hidden p-4 flex items-start justify-center"
+                className={[
+                  "w-full h-full overflow-auto p-2 flex items-center justify-center relative scrollbar-hide",
+                  zoom > 1 ? (isPanning ? "cursor-grabbing" : "cursor-grab") : "cursor-default"
+                ].join(" ")}
+                onMouseDown={handlePanStart}
               >
                 <canvas
                   ref={pageCanvasRef}
                   className="bg-white shadow-[0_8px_24px_rgba(0,0,0,0.45)] rounded"
+                  onWheel={handleWheelZoom}
                 />
+                {shareNotice ? (
+                  <div className="absolute top-4 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-black/70 border border-white/15 text-xs text-white/85 shadow-lg">
+                    {shareNotice}
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="h-full w-full flex items-center justify-center text-white/40 text-sm">
-                No PDF selected.
+                {loadError ? 'Failed to load PDF.' : (isLoading && activeFile?.path ? 'Loading PDF…' : 'No PDF selected.')}
               </div>
             )}
+            {hasDocument && (
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 px-3 py-2 rounded-full bg-black/70 border border-white/15 flex items-center gap-2 text-[11px] text-white/80 shadow-lg">
+                <button
+                  onClick={() => changePage(page - 1)}
+                  disabled={page <= 1}
+                  className="px-1.5 py-1 rounded-md bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-30 disabled:hover:bg-white/5"
+                  title="Previous page"
+                >
+                  <ChevronLeft size={12} />
+                </button>
+                <input
+                  value={pageInput}
+                  onChange={(e) => setPageInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      applyPageInput();
+                    }
+                  }}
+                  onBlur={() => applyPageInput()}
+                  placeholder="Go to"
+                  className="w-16 bg-black/40 border border-white/10 rounded-md px-2 py-1 text-[11px] text-white/80"
+                  title="Go to page (number or label)"
+                />
+                <button
+                  onClick={() => changePage(page + 1)}
+                  disabled={pageCount > 0 ? page >= pageCount : false}
+                  className="px-1.5 py-1 rounded-md bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-30 disabled:hover:bg-white/5"
+                  title="Next page"
+                >
+                  <ChevronRight size={12} />
+                </button>
+                <div className="ml-1 text-[11px] text-white/50">
+                  {pageCount > 0 ? `Page ${page} / ${pageCount}` : `Page ${page}`}
+                  {pageLabel ? ` • Book ${pageLabel}` : ''}
+                </div>
+                <button
+                  onClick={() => setZoom(1)}
+                  className={`ml-2 px-2 py-1 rounded-md text-[10px] ${
+                    zoom === 1
+                      ? "bg-white/5 text-white/45"
+                      : "bg-white/10 hover:bg-white/15 text-white/75"
+                  }`}
+                  title="Reset zoom to 100%"
+                >
+                  {Math.round(zoom * 100)}%
+                </button>
+              </div>
+            )}
+            {showSpinner ? (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/20 pointer-events-none">
+                <div className="w-10 h-10 rounded-full border-2 border-white/20 border-t-white/80 animate-spin" />
+              </div>
+            ) : null}
           </div>
         </div>
 
         {/* Notes + Answers */}
-        <div className="flex flex-col min-h-0">
-          <div className="p-3 border-b border-white/10">
-            <div className="text-xs text-white/50 uppercase tracking-wider">Workspace</div>
-          </div>
+        <div className="flex flex-col min-h-0 min-w-0">
           <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 custom-scrollbar">
             <div className="min-h-[360px] h-full">
               <NoteWorkspace
@@ -633,9 +892,10 @@ const StudyWindow = ({
                 defaultPath={defaultScratchPath}
                 basePath={scratchBase}
                 filterPrefix={scratchBase}
-                pageLabel={pageLabel || String(page)}
                 onContentChange={handleScratchChange}
                 compact
+                hideCategories
+                hidePaths
               />
             </div>
 

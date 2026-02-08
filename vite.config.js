@@ -7,5 +7,11 @@ export default defineConfig({
     base: './', // Important for Electron
     server: {
         port: 5173,
+        proxy: {
+            '/study': {
+                target: 'http://localhost:8000',
+                changeOrigin: true,
+            }
+        }
     }
 })

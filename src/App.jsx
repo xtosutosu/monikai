@@ -92,6 +92,7 @@ function AppContent() {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const lastTypingEmitRef = useRef(0);
+  const studyShareRef = useRef(null);
 
   const [browserData, setBrowserData] = useState({ image: null, logs: [] });
   const [confirmationRequest, setConfirmationRequest] = useState(null);
@@ -343,6 +344,19 @@ function AppContent() {
     fetchStudyCatalog();
   }, []);
 
+  useEffect(() => {
+    if (!socket) return;
+    const onStudyRequestShare = () => {
+      if (showStudyWindow && studyShareRef.current) {
+        try {
+          studyShareRef.current();
+        } catch {}
+      }
+    };
+    socket.on('study_request_share', onStudyRequestShare);
+    return () => socket.off('study_request_share', onStudyRequestShare);
+  }, [showStudyWindow]);
+
   const handleSelectStudy = (selection) => {
     if (!selection) return;
     setStudySelection(selection);
@@ -394,6 +408,61 @@ function AppContent() {
       const sidePad = 16;
       const bottomToolsArea = 140; // space reserved for bottom icons bar
       const bottomPad = 16;
+
+      if (showStudyWindow) {
+        const availableW = width - sidePad * 2;
+        const availableH = height - topBarHeight - bottomPad * 2;
+
+        const baseStudyW = 1160;
+        const baseStudyH = 760;
+        const baseChatW = 520;
+        const baseChatH = 260;
+        const baseGap = 24;
+
+        const rawScale = Math.min(
+          availableW / (baseStudyW + baseGap + baseChatW),
+          availableH / baseStudyH
+        );
+        const scale = Math.min(rawScale, 1.45);
+
+        const gap = Math.max(12, Math.round(baseGap * scale));
+        const studyW = Math.round(baseStudyW * scale);
+        const studyH = Math.round(baseStudyH * scale);
+        const chatW = Math.round(baseChatW * scale);
+        const chatH = Math.round(baseChatH * scale);
+
+        const groupW = studyW + gap + chatW;
+        const centerX = Math.round(width / 2);
+        const topInset = Math.round(18 * scale);
+        let studyTop = topBarHeight + topInset;
+        const maxStudyTop = height - bottomPad - studyH;
+        if (studyTop > maxStudyTop) {
+          studyTop = Math.max(topBarHeight + 8, maxStudyTop);
+        }
+
+        const studyX = Math.round(centerX - groupW / 2 + studyW / 2);
+        const studyY = Math.round(studyTop + studyH / 2);
+
+        const chatTop = Math.round(studyTop + studyH - chatH - 1);
+        const chatX = Math.round(studyX + studyW / 2 + gap + chatW / 2);
+
+        setElementSizes(prev => ({
+          ...prev,
+          chat: { w: chatW, h: chatH },
+          study: { w: studyW, h: studyH },
+        }));
+
+        setElementPositions(prev => ({
+          ...prev,
+          chat: { x: chatX, y: chatTop },
+          study: { x: studyX, y: studyY },
+          tools: { x: width / 2, y: height - 100 },
+          video: { x: width - 230, y: height - 210 },
+          screen: { x: width - 230, y: height - 210 },
+        }));
+
+        return;
+      }
 
       const baseChatMax = width - sidePad * 2;
       const focusMode = sessionMode.active || showStudyWindow;
@@ -1688,16 +1757,34 @@ function AppContent() {
     socket.emit('session_sketch_save', payload);
   };
 
-const handleSend = (e) => {
-  if (!e || e.key !== 'Enter') return;
+  const isCurrentPageRequest = (raw) => {
+    const text = String(raw || '').trim().toLowerCase();
+    if (!text) return false;
+    if (text.includes('can you see this current page')) return true;
+    if (text.includes('can you see the current page')) return true;
+    if (text.includes('can you see current page')) return true;
+    return false;
+  };
 
-  const text = (inputValue || '').trim();
-  const attachments = Array.isArray(e.attachments) ? e.attachments : [];
+  const handleSend = (e) => {
+    if (!e || e.key !== 'Enter') return;
+
+    const text = (inputValue || '').trim();
+    const attachments = Array.isArray(e.attachments) ? e.attachments : [];
 
   // pozwól wysłać: (tekst) lub (same załączniki) lub (oba)
   if (!text && attachments.length === 0) return;
 
-  socket.emit('user_input', { text, attachments });
+    const shouldAutoShare = Boolean(showStudyWindow && studyShareRef.current && isCurrentPageRequest(text));
+    const sendToBackend = () => socket.emit('user_input', { text, attachments });
+    if (shouldAutoShare) {
+      try {
+        studyShareRef.current();
+      } catch {}
+      setTimeout(sendToBackend, 250);
+    } else {
+      sendToBackend();
+    }
 
   // Lokalne dodanie wiadomości użytkownika do UI (bo backend nie zawsze echo-uje usera)
   if (attachments.length > 0) {
@@ -1812,6 +1899,7 @@ const handleSend = (e) => {
 
     // In VN layout: visualizer + chat stay fixed
     const fixedElements = ['visualizer', 'chat', 'video', 'screen'];
+    if (showStudyWindow) fixedElements.push('study');
     if (fixedElements.includes(id)) {
       console.log(`[MouseDrag] ${id} is a fixed element, not draggable`);
       return;
@@ -1922,8 +2010,16 @@ const handleSend = (e) => {
     };
   }, [elementPositions.chat, elementSizes.chat, viewport.h]);
   const focusMode = sessionMode.active || showStudyWindow;
-  const characterShift = focusMode ? Math.min(380, Math.round(viewport.w * 0.26)) : 0;
+  const chatCenterX = elementPositions.chat?.x ?? viewport.w / 2;
+  const characterShift = Math.round(chatCenterX - viewport.w / 2);
   const characterY = focusMode ? -80 : -40;
+  const characterScale = useMemo(() => {
+    const refW = 1920;
+    const refH = 1080;
+    const sizeFactor = Math.min(viewport.w / refW, viewport.h / refH);
+    const t = Math.max(0, Math.min(1, (sizeFactor - 0.85) / 0.25));
+    return 1.05 + 0.15 * t;
+  }, [viewport.w, viewport.h]);
 
   return (
     <div className="h-screen w-screen bg-black text-white/85 font-sans overflow-hidden flex flex-col relative selection:bg-white/10 selection:text-white">
@@ -1953,7 +2049,7 @@ const handleSend = (e) => {
           }}
           isAssistantSpeaking={aiSpeaking}
           isUserSpeaking={userSpeaking}
-          characterScale={1.20}
+          characterScale={characterScale}
           characterY={characterY}
           characterX={characterShift}
         />
@@ -2199,6 +2295,8 @@ const handleSend = (e) => {
           userSpeaking={userSpeaking}
           micAudioData={micAudioData}
           zIndex={10}
+          studyModeActive={showStudyWindow}
+          onShareStudyPage={() => studyShareRef.current && studyShareRef.current()}
         />
 
         {/* Tools Module */}
@@ -2286,6 +2384,7 @@ const handleSend = (e) => {
             selection={studySelection}
             onSelectStudy={handleSelectStudy}
             onRefreshCatalog={fetchStudyCatalog}
+            shareRef={studyShareRef}
           />
         )}
 

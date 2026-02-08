@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -180,6 +180,22 @@ app.whenReady().then(() => {
 
     ipcMain.on('window-close', () => {
         if (mainWindow) mainWindow.close();
+    });
+
+    ipcMain.handle('reveal-memory-page', (_event, payload) => {
+        try {
+            const rel = String(payload?.path || '');
+            if (!rel) return { ok: false, error: 'Missing path' };
+            const baseDir = path.resolve(__dirname, '..', 'data', 'memory', 'pages');
+            const target = path.isAbsolute(rel) ? path.resolve(rel) : path.resolve(baseDir, rel);
+            const allowed = target === baseDir || target.startsWith(baseDir + path.sep);
+            if (!allowed) return { ok: false, error: 'Invalid path' };
+            if (!fs.existsSync(target)) return { ok: false, error: 'Not found' };
+            shell.showItemInFolder(target);
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err?.message || 'Unknown error' };
+        }
     });
 
     checkBackendPort(8000).then((isTaken) => {
