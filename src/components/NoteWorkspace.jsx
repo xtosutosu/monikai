@@ -37,6 +37,39 @@ const sanitizeMarkdown = (value) => {
 
 const stripSlashMarker = (line) => line.replace(/^(\s*)\/\s*/, '$1');
 
+const normalizeTitle = (value) => {
+  return (value || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+const extractHiddenHeading = (text, expectedTitle) => {
+  const lines = text.split('\n');
+  let firstIdx = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].trim()) {
+      firstIdx = i;
+      break;
+    }
+  }
+  if (firstIdx === -1) return { visibleText: text, hiddenHeading: '' };
+  const line = lines[firstIdx];
+  const match = line.match(/^#\s+(.+)/);
+  if (!match) return { visibleText: text, hiddenHeading: '' };
+  const headingTitle = normalizeTitle(match[1]);
+  const expected = normalizeTitle(expectedTitle);
+  if (!expected || headingTitle !== expected) {
+    return { visibleText: text, hiddenHeading: '' };
+  }
+  const nextLines = [...lines];
+  nextLines.splice(firstIdx, 1);
+  return { visibleText: nextLines.join('\n'), hiddenHeading: line };
+};
+
 const extractSpanStyle = (part) => {
   const inner = part.replace(/^<span[^>]*>/i, '').replace(/<\/span>$/i, '');
   const openTag = part.match(/^<span[^>]*>/i)?.[0] || '';
@@ -314,6 +347,7 @@ const NoteWorkspace = ({
   const [contextMenu, setContextMenu] = useState(null);
   const [slashMenu, setSlashMenu] = useState(null);
   const [titleEdit, setTitleEdit] = useState(null);
+  const [hiddenHeading, setHiddenHeading] = useState('');
 
   const textareaRef = useRef(null);
   const overlayRef = useRef(null);
@@ -324,6 +358,9 @@ const NoteWorkspace = ({
   const isTypingRef = useRef(false);
   const notesTextRef = useRef('');
   const pagePathRef = useRef('');
+  const hiddenHeadingRef = useRef('');
+  const requestedPathRef = useRef('');
+  const pagesRef = useRef([]);
   const hideCategoryUI = Boolean(hideCategories);
   const showPaths = !hidePaths;
 
@@ -363,9 +400,35 @@ const NoteWorkspace = ({
     pagePathRef.current = pagePath;
   }, [pagePath]);
 
+  useEffect(() => {
+    hiddenHeadingRef.current = hiddenHeading;
+  }, [hiddenHeading]);
+
+  useEffect(() => {
+    pagesRef.current = pages;
+  }, [pages]);
+
+  useEffect(() => {
+    hiddenHeadingRef.current = '';
+    setHiddenHeading('');
+  }, [pagePath]);
+
+  useEffect(() => {
+    if (hiddenHeadingRef.current) return;
+    if (!notesTextRef.current) return;
+    const pageInfo = pagesRef.current.find(p => p.path === pagePathRef.current);
+    if (!pageInfo?.title) return;
+    const { visibleText, hiddenHeading: extractedHeading } = extractHiddenHeading(notesTextRef.current, pageInfo.title);
+    if (extractedHeading && visibleText !== notesTextRef.current) {
+      setHiddenHeading(extractedHeading);
+      setNotesText(visibleText);
+    }
+  }, [pages, pagePath]);
+
   const requestNotes = (pathOverride) => {
     if (!socket) return;
     const target = normalizePath(pathOverride || pagePathRef.current || defaultPath);
+    requestedPathRef.current = target;
     if (target !== pagePathRef.current) {
       setPagePath(target);
     }
@@ -382,11 +445,30 @@ const NoteWorkspace = ({
     const onNotes = (data) => {
       if (data && typeof data.text === 'string') {
         const cleaned = sanitizeMarkdown(data.text);
-        if (!isTypingRef.current || cleaned !== notesTextRef.current) {
-          setNotesText(cleaned);
+        const normalizedPath = String(data.path || '').replace(/\\/g, '/');
+        let relPath = '';
+        if (normalizedPath) {
+          const idx = normalizedPath.lastIndexOf('memory/pages/');
+          if (idx >= 0) {
+            relPath = normalizedPath.slice(idx + 'memory/pages/'.length);
+          }
+        }
+        const currentPath = pagePathRef.current;
+        const requestedPath = requestedPathRef.current;
+        if (relPath && relPath !== currentPath && relPath !== requestedPath) {
+          return;
+        }
+        const pageInfo = pagesRef.current.find(p => p.path === (relPath || normalizedPath));
+        const expectedTitle = pageInfo?.title
+          || (relPath || normalizedPath).split('/').pop()?.replace(/\.(md|txt)$/i, '') || '';
+        const { visibleText, hiddenHeading: extractedHeading } = extractHiddenHeading(cleaned, expectedTitle);
+        hiddenHeadingRef.current = extractedHeading;
+        setHiddenHeading(extractedHeading);
+        if (!isTypingRef.current || visibleText !== notesTextRef.current) {
+          setNotesText(visibleText);
         }
         if (cleaned !== data.text) {
-          scheduleSave(cleaned);
+          scheduleSave(visibleText);
         }
       }
       if (data && data.path) {
@@ -394,7 +476,9 @@ const NoteWorkspace = ({
         const idx = base.lastIndexOf('memory/pages/');
         if (idx >= 0) {
           const rel = base.slice(idx + 'memory/pages/'.length);
-          setPagePath(rel);
+          if (rel === requestedPathRef.current || rel === pagePathRef.current) {
+            setPagePath(rel);
+          }
         }
       }
       setStatus('saved');
@@ -440,9 +524,12 @@ const NoteWorkspace = ({
     if (!socket) return;
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     setStatus('saving');
+    const payload = hiddenHeadingRef.current
+      ? `${hiddenHeadingRef.current}\n${text || ''}`
+      : (text || '');
     saveTimeoutRef.current = setTimeout(() => {
       const target = normalizePath(pagePathRef.current || defaultPath);
-      socket.emit('memory_set_page', { path: target, content: text || '' });
+      socket.emit('memory_set_page', { path: target, content: payload });
     }, 450);
   };
 
@@ -700,39 +787,40 @@ const NoteWorkspace = ({
 
   const closeSlashMenu = () => setSlashMenu(null);
 
+  const updateSlashMenuState = (value, pos) => {
+    const lineStart = value.lastIndexOf('\n', Math.max(pos - 1, 0)) + 1;
+    const before = value.slice(lineStart, pos);
+    const trimmed = before.trim();
+    if (trimmed === '/') {
+      openSlashMenu();
+      return;
+    }
+    if (!trimmed.startsWith('/')) {
+      closeSlashMenu();
+    }
+  };
+
   const handleLiveKeyDown = (e) => {
-    if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (e.key === 'Escape') {
+      closeSlashMenu();
+      return;
+    }
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === '/' || e.key === 'Backspace' || e.key === 'Delete')) {
       requestAnimationFrame(() => {
         const el = textareaRef.current;
         if (!el) return;
         const value = el.value || '';
-        const pos = el.selectionStart ?? 0;
-        const lineStart = value.lastIndexOf('\n', Math.max(pos - 1, 0)) + 1;
-        const before = value.slice(lineStart, pos);
-        if (before.trim() === '/') {
-          openSlashMenu();
-        } else {
-          closeSlashMenu();
-        }
+        const pos = el.selectionStart ?? value.length;
+        updateSlashMenuState(value, pos);
       });
-      return;
-    }
-    if (slashMenu && e.key === 'Escape') {
-      closeSlashMenu();
     }
   };
 
   const handleLiveChange = (e) => {
     const value = e.target.value;
     updateText(value);
-    if (!slashMenu) return;
     const pos = e.target.selectionStart ?? value.length;
-    const lineStart = value.lastIndexOf('\n', Math.max(pos - 1, 0)) + 1;
-    const before = value.slice(lineStart, pos);
-    const trimmed = before.trim();
-    if (!trimmed.startsWith('/')) {
-      closeSlashMenu();
-    }
+    updateSlashMenuState(value, pos);
   };
 
   const handleScroll = (e) => {
@@ -810,6 +898,80 @@ const NoteWorkspace = ({
     socket.emit('memory_delete_page', { path: pagePath });
     socket.emit('memory_list_pages');
     setTimeout(() => requestNotes(defaultPath), 150);
+  };
+
+  const deletePageByPath = (path) => {
+    if (!socket || !path) return;
+    const normalized = path.replace(/\\/g, '/');
+    const title = pages.find(p => p.path === normalized)?.title || normalized.split('/').pop() || path;
+    if (!window.confirm(`Delete "${title}"?`)) return;
+    socket.emit('memory_delete_page', { path: normalized });
+    socket.emit('memory_list_pages');
+    if (normalized === pagePathRef.current) {
+      setTimeout(() => requestNotes(defaultPath), 150);
+    }
+  };
+
+  const buildDuplicateContent = (text, originalTitle, newTitle) => {
+    const lines = (text || '').split('\n');
+    let firstIdx = -1;
+    for (let i = 0; i < lines.length; i += 1) {
+      if (lines[i].trim()) {
+        firstIdx = i;
+        break;
+      }
+    }
+    if (firstIdx === -1) {
+      return `# ${newTitle}\n\n`;
+    }
+    const match = lines[firstIdx].match(/^#\s+(.+)/);
+    if (match && normalizeTitle(match[1]) === normalizeTitle(originalTitle)) {
+      lines[firstIdx] = `# ${newTitle}`;
+      return lines.join('\n');
+    }
+    return `# ${newTitle}\n\n${text || ''}`;
+  };
+
+  const duplicatePage = (path) => {
+    if (!socket || !path) return;
+    const normalized = path.replace(/\\/g, '/');
+    const pageInfo = pages.find(p => p.path === normalized);
+    const baseTitle = pageInfo?.title || normalized.split('/').pop()?.replace(/\.(md|txt)$/i, '') || 'note';
+    const extMatch = normalized.match(/\.[^/.]+$/);
+    const ext = extMatch ? extMatch[0] : '.md';
+    const dir = normalized.includes('/') ? normalized.slice(0, normalized.lastIndexOf('/')) : '';
+    const baseSlug = slugify(`${baseTitle}-kopia`);
+    let candidate = dir ? `${dir}/${baseSlug}${ext}` : `${baseSlug}${ext}`;
+    const existing = new Set(pages.map(p => p.path));
+    let i = 2;
+    while (existing.has(candidate)) {
+      candidate = dir ? `${dir}/${baseSlug}-${i}${ext}` : `${baseSlug}-${i}${ext}`;
+      i += 1;
+    }
+    const newTitle = `${baseTitle} kopia`;
+    let timeoutId;
+    const handler = (data) => {
+      const dataPath = String(data?.path || '').replace(/\\/g, '/');
+      let relPath = dataPath;
+      const idx = dataPath.lastIndexOf('memory/pages/');
+      if (idx >= 0) {
+        relPath = dataPath.slice(idx + 'memory/pages/'.length);
+      }
+      if (relPath && relPath !== normalized) return;
+      socket.off('memory_page', handler);
+      if (timeoutId) clearTimeout(timeoutId);
+      const rawText = typeof data?.text === 'string' ? data.text : '';
+      const cleaned = sanitizeMarkdown(rawText);
+      const content = buildDuplicateContent(cleaned, baseTitle, newTitle);
+      socket.emit('memory_create_page', { path: candidate, title: newTitle });
+      socket.emit('memory_set_page', { path: candidate, content });
+      socket.emit('memory_list_pages');
+    };
+    socket.on('memory_page', handler);
+    timeoutId = setTimeout(() => {
+      socket.off('memory_page', handler);
+    }, 3000);
+    socket.emit('memory_get_page', { path: normalized });
   };
 
   const openContextMenu = (e, path) => {
@@ -904,7 +1066,7 @@ const NoteWorkspace = ({
       titleInputRef.current?.focus();
       titleInputRef.current?.select();
     });
-  }, [titleEdit]);
+  }, [titleEdit?.path]);
 
   const toolbarButton = 'p-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white/70 hover:text-white transition-colors';
   const slashCommands = [
@@ -1203,6 +1365,24 @@ const NoteWorkspace = ({
             }}
           >
             Zmień nazwę
+          </button>
+          <button
+            className="w-full px-3 py-2 text-left text-[12px] text-white/80 hover:bg-white/10 rounded-lg"
+            onClick={() => {
+              duplicatePage(contextMenu.path);
+              setContextMenu(null);
+            }}
+          >
+            Duplikuj notatkę
+          </button>
+          <button
+            className="w-full px-3 py-2 text-left text-[12px] text-red-200/80 hover:bg-red-500/20 rounded-lg"
+            onClick={() => {
+              deletePageByPath(contextMenu.path);
+              setContextMenu(null);
+            }}
+          >
+            Usuń notatkę
           </button>
           <button
             className="w-full px-3 py-2 text-left text-[12px] text-white/80 hover:bg-white/10 rounded-lg"
